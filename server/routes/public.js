@@ -1,7 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const { getPricing, createOrder, imageInfo, MAX_ITEMS, MAX_QTY } = require("../lib/orders");
-const { rand, HttpError } = require("../lib/util");
+const { HttpError } = require("../lib/util");
 const { sameOrigin } = require("../auth");
 
 const router = express.Router();
@@ -25,11 +25,10 @@ function orderLimit(req, res, next) {
 }
 
 router.get("/pricing", (req, res) => {
+  // Config for pricing.js in the browser (cents). The server recalculates every order regardless.
   const p = getPricing();
   res.set("Cache-Control", "no-store");
-  const prices = {};
-  for (const [k, c] of Object.entries(p.perPanelCents)) prices[k] = rand(c);
-  res.json({ prices, shipping: rand(p.shippingCents), maxItems: MAX_ITEMS, maxQty: MAX_QTY });
+  res.json({ pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers, maxItems: MAX_ITEMS, maxQty: MAX_QTY });
 });
 
 router.post("/orders", orderLimit, (req, res, next) => {
@@ -77,12 +76,13 @@ router.post("/orders", orderLimit, (req, res, next) => {
 
     const result = createOrder({
       firstName: b.firstName, lastName: b.lastName, email: b.email, phone: b.phone,
-      address: b.address, city: b.city, postal: b.postal, rightsConfirmed: b.rights === "true"
+      address: b.address, city: b.city, postal: b.postal, rightsConfirmed: b.rights === "true",
+      expectedTotalCents: b.expectedTotalCents === undefined || b.expectedTotalCents === "" ? null : Number(b.expectedTotalCents)
     }, items);
 
     res.status(201).json({ ok: true, orderNumber: result.orderNumber });
   } catch (err) {
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, pricesChanged: err.status === 409 });
     console.error("Order creation failed:", err);
     res.status(500).json({ error: "Something went wrong saving your order. Please try again." });
   }

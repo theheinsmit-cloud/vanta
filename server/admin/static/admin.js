@@ -265,10 +265,14 @@
       (o.payment.status === "pending" ? '<button class="btn sm" type="button" id="btn-pay">Record payment</button>' : "") +
       (o.payment.status === "paid" && m.refunded === 0 ? '<button class="btn sm ghost" type="button" id="btn-unpay">Mark as unpaid</button>' : "") +
       (canRefund ? '<button class="btn sm danger" type="button" id="btn-refund">Record refund</button>' : "") + "</div></div>" +
-      o.items.map(function (i) {
-        return '<div class="money-row"><span>' + (multi ? "Print " + i.no + ": " : "") + esc(i.layoutLabel) + " (" + (i.qty > 1 ? i.qty + " copies, " : "") + plural(i.panels, "panel") + " × " + money(i.pricePerPanel) + ")</span><span>" + money(i.line) + "</span></div>";
-      }).join("") +
-      '<div class="money-row"><span>Delivery charged</span><span>' + (m.shipping ? money(m.shipping) : "Free") + "</span></div>" +
+      // As frozen when the order was placed; later pricing changes never alter these.
+      '<div class="money-row"><span>Total panels</span><span>' + o.panels + "</span></div>" +
+      '<div class="money-row"><span>Product subtotal (' + o.panels + " × " + money(m.pricePerPanel) + ")</span><span>" + money(m.product) + "</span></div>" +
+      (m.discount ? '<div class="money-row"><span>Volume discount (' + m.discountPct + "%)</span><span class=\"pos\">−" + money(m.discount) + "</span></div>"
+        : '<div class="money-row"><span class="muted">Volume discount</span><span class="muted">None</span></div>') +
+      '<div class="money-row"><span>Discounted product subtotal</span><span>' + money(m.discountedProduct) + "</span></div>" +
+      '<div class="money-row"><span>Delivery &amp; handling <span class="muted small">(customer sees free delivery)</span></span><span>' + money(m.shipping) + "</span></div>" +
+      '<p class="hint" style="margin:4px 0 8px">Customer saw: ' + o.panels + ' × ' + money(m.pricePerPanel + m.shipping) + (o.panels > 1 ? ' − ' + money((o.panels - 1) * m.shipping) + ' multi-panel discount' : '') + (m.discount ? ' − ' + money(m.discount) + ' volume discount (' + m.discountPct + '%)' : '') + ', free delivery.</p>' +
       '<div class="money-row total"><span>Order total</span><span>' + money(m.total) + "</span></div>" +
       '<div class="money-row"><span class="muted">Payment status</span><span>' + payPill(o) + "</span></div>" +
       '<div class="money-row"><span class="muted">Amount paid</span><span>' + money(m.paid) + "</span></div>" + paidDetail +
@@ -643,41 +647,68 @@
   }
 
   /* ---------- pricing ---------- */
+  // One price per panel + a per-order handling charge (customers see free delivery) + volume discounts.
+  // The preview uses window.VantaPricing, the same rules the shop and the server use.
   function pagePricing(token) {
     return api("/pricing").then(function (d) {
       if (token !== renderToken) return;
-      var rows = d.layouts.map(function (l) {
-        return '<tr data-key="' + l.key + '" data-panels="' + l.panels + '" data-cost="' + l.estCost + '"><td><strong>' + esc(l.label) + '</strong><div class="muted small">' + l.panels + " panel" + (l.panels > 1 ? "s" : "") + "</div></td>" +
-          '<td style="width:160px"><input class="p-price" type="number" step="0.01" min="0.01" required value="' + l.pricePerPanel.toFixed(2) + '" aria-label="' + esc(l.label) + ' price per panel in rand"></td>' +
-          '<td class="r nowrap p-total"></td><td class="r nowrap p-vs"></td><td class="r nowrap muted">' + money(l.estCost) + '</td><td class="r nowrap p-profit"></td></tr>';
-      }).join("");
+      function tierRow(t) {
+        return '<tr class="tier"><td><input class="t-min" type="number" min="2" step="1" required value="' + (t ? t.minPanels : "") + '" aria-label="From this many panels"></td>' +
+          '<td><input class="t-pct" type="number" min="0.01" max="99.99" step="0.01" required value="' + (t ? t.pct : "") + '" aria-label="Discount percent"></td>' +
+          '<td class="r nowrap t-each"></td><td class="r"><button class="btn danger sm t-remove" type="button">Remove</button></td></tr>';
+      }
       view.innerHTML = '<div class="page-head"><div><div class="eyebrow">Pricing</div><h1 class="page">Pricing</h1></div></div>' +
         '<form id="pricing-form" class="stack">' +
-        '<section class="card"><h2>Price per panel, by layout</h2>' +
-        '<p class="hint" style="margin-bottom:14px">Set what a customer pays <strong>per panel</strong> for each layout, so bigger layouts can cost less per panel. The Create page shows these prices, and the server recalculates every order from them. Changes only affect new orders.</p>' +
-        '<div class="tablewrap"><table class="tbl" style="min-width:760px"><thead><tr><th>Layout</th><th>Price per panel (R)</th><th class="r">Customer pays</th><th class="r">Per panel vs Single</th><th class="r">Est. cost</th><th class="r">Est. profit</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
-        '<p class="hint">Est. cost comes from <a href="#/finance/costs">Finance &rarr; Unit costs</a>. Est. profit is what the customer pays minus that cost.</p>' +
-        '<div class="notice" style="margin-top:14px">Delivery is always advertised as <strong>Free</strong>. Build it into the prices above; what you pay the courier is counted in Unit costs.</div></section>' +
+        '<section class="card"><h2>Price</h2><div class="row">' +
+        '<div class="field"><label class="lbl" for="p-price">Price per A4 panel (R)</label><input id="p-price" type="number" step="0.01" min="0.01" required value="' + (d.pricePerPanelCents / 100).toFixed(2) + '"></div>' +
+        '<div class="field"><label class="lbl" for="p-handling">Delivery &amp; handling per order (R)</label><input id="p-handling" type="number" step="0.01" min="0" required value="' + (d.handlingCents / 100).toFixed(2) + '"></div></div>' +
+        '<p class="hint">Every panel costs the same, whatever the layout. Delivery &amp; handling is charged <strong>once per order</strong> and never discounted. Customers see every panel advertised at <strong id="p-one"></strong> (price + delivery &amp; handling) with free delivery; from the second panel on, the delivery &amp; handling they do not pay again shows as a <strong>multi-panel discount</strong>.</p></section>' +
+        '<section class="card"><h2>Volume discounts</h2>' +
+        '<p class="hint" style="margin-bottom:14px">Counted on the total number of panels in an order, across every print and every copy. The discount comes off the panel price only, never off delivery &amp; handling.</p>' +
+        '<div class="tablewrap"><table class="tbl" style="min-width:560px"><thead><tr><th>From (panels)</th><th>Discount (%)</th><th class="r">Panel price after discount</th><th></th></tr></thead><tbody id="tiers">' +
+        d.tiers.map(tierRow).join("") + '</tbody></table></div>' +
+        '<div class="actions" style="margin-top:12px"><button class="btn ghost sm" type="button" id="tier-add">Add a discount level</button></div></section>' +
+        '<section class="card"><h2>What customers pay</h2><div class="tablewrap"><table class="tbl" style="min-width:900px"><thead><tr><th>Panels</th><th class="r">Advertised</th><th class="r">Multi-panel discount</th><th class="r">Volume discount</th><th class="r">Customer pays</th><th class="r">Est. cost</th><th class="r">Est. profit</th></tr></thead><tbody id="preview"></tbody></table></div>' +
+        '<p class="hint">Est. cost comes from <a href="#/finance/costs">Finance &rarr; Unit costs</a> (per-panel lines × panels, plus per-order lines once).</p></section>' +
         '<div><button class="btn" type="submit">Save pricing</button></div></form>';
+
+      function readCfg() {
+        var tiers = $$("#tiers tr.tier").map(function (tr) { return { minPanels: parseInt($(".t-min", tr).value, 10), pct: parseFloat($(".t-pct", tr).value) }; })
+          .filter(function (t) { return t.minPanels >= 2 && t.pct > 0 && t.pct < 100; });
+        return { pricePerPanelCents: Math.round((parseFloat($("#p-price").value) || 0) * 100), handlingCents: Math.round((parseFloat($("#p-handling").value) || 0) * 100), tiers: tiers };
+      }
       function recalc() {
-        var single = parseFloat($('tr[data-key="single"] .p-price').value) || 0;
-        $$("tr[data-key]").forEach(function (tr) {
-          var price = parseFloat($(".p-price", tr).value) || 0, panels = +tr.getAttribute("data-panels");
-          var total = price * panels, profit = total - parseFloat(tr.getAttribute("data-cost"));
-          $(".p-total", tr).textContent = money(total);
-          var vs = tr.getAttribute("data-key") === "single" || !single ? "—" : (price < single ? (Math.round((1 - price / single) * 1000) / 10) + "% less" : price > single ? (Math.round((price / single - 1) * 1000) / 10) + "% more" : "same");
-          $(".p-vs", tr).textContent = vs;
-          $(".p-profit", tr).textContent = money(profit);
-          $(".p-profit", tr).className = "r nowrap p-profit " + (profit < 0 ? "neg" : "pos");
+        var cfg = readCfg();
+        $("#p-one").textContent = money(VantaPricing.quote(1, cfg).totalCents / 100);
+        $$("#tiers tr.tier").forEach(function (tr) {
+          var pct = parseFloat($(".t-pct", tr).value) || 0;
+          $(".t-each", tr).textContent = money(Math.round(cfg.pricePerPanelCents * (100 - pct) / 100) / 100);
         });
+        var counts = [1, 4];
+        cfg.tiers.forEach(function (t) { counts.push(t.minPanels - 1, t.minPanels); });
+        counts = counts.filter(function (n, i, a) { return n >= 1 && a.indexOf(n) === i; }).sort(function (a, b) { return a - b; });
+        $("#preview").innerHTML = counts.map(function (n) {
+          var q = VantaPricing.quote(n, cfg);
+          var cost = n * d.costPerPanelCents + d.costPerOrderCents, profit = q.totalCents - cost;
+          return "<tr><td>" + n + '</td><td class="r nowrap">' + n + ' × ' + money(q.advertisedPerPanelCents / 100) + ' = ' + money(q.advertisedCents / 100) + '</td><td class="r nowrap">' + (q.multiPanelSavingCents ? '−' + money(q.multiPanelSavingCents / 100) : '—') + '</td><td class="r nowrap">' + (q.discountPct ? q.discountPct + '% · −' + money(q.discountCents / 100) : '—') +
+            '</td><td class="r nowrap"><strong>' + money(q.totalCents / 100) + '</strong></td><td class="r nowrap muted">' + money(cost / 100) + '</td><td class="r nowrap ' + (profit < 0 ? "neg" : "pos") + '">' + money(profit / 100) + "</td></tr>";
+        }).join("");
       }
       $("#pricing-form").addEventListener("input", recalc);
+      $("#tiers").addEventListener("click", function (e) {
+        var b = e.target.closest(".t-remove");
+        if (b) { b.closest("tr").remove(); recalc(); }
+      });
+      $("#tier-add").addEventListener("click", function () {
+        $("#tiers").insertAdjacentHTML("beforeend", tierRow(null));
+        $("#tiers tr.tier:last-child .t-min").focus();
+      });
       recalc();
       $("#pricing-form").addEventListener("submit", function (e) {
         e.preventDefault();
-        var prices = {};
-        $$("tr[data-key]").forEach(function (tr) { prices[tr.getAttribute("data-key")] = $(".p-price", tr).value; });
-        api("/pricing", { json: { prices: prices } }).then(function () { toast("Pricing saved"); }).catch(fail);
+        var tiers = $$("#tiers tr.tier").map(function (tr) { return { minPanels: $(".t-min", tr).value, pct: $(".t-pct", tr).value }; });
+        api("/pricing", { json: { pricePerPanel: $("#p-price").value, handling: $("#p-handling").value, tiers: tiers } })
+          .then(function () { toast("Pricing saved"); return pagePricing(token); }).catch(fail);
       });
     });
   }

@@ -508,3 +508,13 @@ legend{font-family:var(--display);font-size:1.05rem;color:var(--text-primary);ma
 .print-group{margin-top:1.6rem;text-align:left}
 .print-group h4{font-family:var(--display);font-size:1.1rem;margin:0 0 .2rem}
 .print-group .print-files{margin-top:.8rem}
+
+/* ===== Order summary discounts ===== */
+.price-row .price-note{display:block;font-size:.78rem;color:var(--text-secondary);opacity:.8;margin-top:.15rem}
+.price-row.discount .label{color:var(--text-primary)}
+.price-row.discount > span:last-child{color:var(--accent)}
+.discount-note{margin:0 0 .6rem}
+.discount-note p{margin:0 0 .5rem;font-size:.9rem;line-height:1.45}
+.discount-yes{padding:.7rem .9rem;border:1px solid var(--hairline-strong);background:rgba(201,162,74,.08);color:var(--accent)}
+.discount-next{color:var(--text-secondary)}
+.cart-item > .cart-tag{grid-column:2 / -1}

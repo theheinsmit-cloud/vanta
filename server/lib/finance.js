@@ -3,7 +3,8 @@ const path = require("path");
 const crypto = require("crypto");
 const { db, tx, now, getSettings, setSetting } = require("../db");
 const { RECEIPT_DIR } = require("../config");
-const { EXPENSE_CATEGORIES, EXPENSE_TYPES, STATUSES, STATUS_LABEL, PRICED_LAYOUTS, LAYOUT_LABEL, LAYOUT_PANELS } = require("./constants");
+const { EXPENSE_CATEGORIES, EXPENSE_TYPES, STATUSES, STATUS_LABEL } = require("./constants");
+const { cleanTiers } = require("../../site/assets/js/pricing");
 const { financials, getPricing } = require("./orders");
 const { rand, toCents, clampStr, slug, saDate, isDateStr, safeFilename, HttpError } = require("./util");
 
@@ -229,24 +230,25 @@ function saveSettings(f) {
 }
 
 /* ---------------- pricing (what customers pay) ---------------- */
-// Sliding scale: each layout has its own price per panel. Est. cost comes from the current unit costs.
+// One price per panel + a per-order handling charge (shown to customers as free delivery) + volume discount tiers.
+// The admin page previews totals with the same pricing.js the shop and server use. Costs are in cents for that preview.
 function pricingView() {
   const p = getPricing();
-  const costs = listCostItems().examples;
-  return {
-    layouts: PRICED_LAYOUTS.map((k) => ({ key: k, label: LAYOUT_LABEL[k], panels: LAYOUT_PANELS[k], pricePerPanel: rand(p.perPanelCents[k]), estCost: costs[LAYOUT_PANELS[k]] }))
-  };
+  const items = db.prepare("SELECT * FROM cost_items").all();
+  const costFor = (basis) => items.filter((i) => i.basis === basis).reduce((s, i) => s + Math.round(i.amount_cents * i.qty), 0);
+  return { ...p, costPerPanelCents: costFor("per_panel"), costPerOrderCents: costFor("per_order") };
 }
 function savePricing(f) {
-  const prices = (f && f.prices) || {};
+  f = f || {};
+  const price = toCents(f.pricePerPanel), handling = toCents(f.handling);
+  if (price == null || price <= 0) throw new HttpError(400, "Price per panel must be above zero.");
+  if (handling == null || handling < 0) throw new HttpError(400, "Delivery & handling must be zero or more.");
+  let tiers;
+  try { tiers = cleanTiers(f.tiers || []); } catch (e) { throw new HttpError(400, e.message); }
   return tx(() => {
-    for (const k of PRICED_LAYOUTS) {
-      const c = toCents(prices[k]);
-      if (c == null || c <= 0) throw new HttpError(400, LAYOUT_LABEL[k] + " price per panel must be above zero.");
-      setSetting("price_" + k + "_cents", c);
-    }
-    // Delivery is always advertised as free: the courier cost is built into the panel prices.
-    setSetting("shipping_cents", 0);
+    setSetting("price_per_panel_cents", price);
+    setSetting("shipping_cents", handling);
+    setSetting("volume_tiers", JSON.stringify(tiers));
     return pricingView();
   });
 }

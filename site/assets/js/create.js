@@ -30,6 +30,7 @@
   var priceLinesEl = document.getElementById("price-lines");
   var uploadTitle = document.getElementById("upload-title");
   var uploadSub = document.getElementById("upload-sub");
+  var discountNoteEl = document.getElementById("discount-note");
 
   if (!uploadZone) return;
 
@@ -147,6 +148,7 @@
     }
     resetOrder();
     originalFile = file;
+    draftQty = 1;
     var reader = new FileReader();
     reader.onload = function(e){
       previewImg.onload = function(){
@@ -177,6 +179,7 @@
     fileInput.value = "";
     lowResConfirm.classList.remove("show");
     lowResCheck.checked = false;
+    draftQty = 1;
     renderCart();
   }
   changeImageBtn.addEventListener("click", function(){
@@ -283,30 +286,40 @@
   }
 
   /* ---------- cart: one order can hold several prints, each with its own image, layout, crop and copies ----------
-     Prices are defaults until the server answers; the server recalculates every order anyway. */
-  var PRICES = { single: 449, duo: 449, quad: 449 }; // price per panel, per layout (sliding scale)
-  var DELIVERY = 0;
+     All prices come from pricing.js (window.VantaPricing), the same rules the server uses to charge the order.
+     The config below is a fallback until /api/pricing answers. */
+  var PRICING = { pricePerPanelCents: 35000, handlingCents: 10000, tiers: [{ minPanels: 5, pct: 5 }, { minPanels: 10, pct: 10 }, { minPanels: 20, pct: 15 }] };
   var MAX_ITEMS = 10, MAX_QTY = 20;
-  fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
-    if (p && p.prices){
-      PRICES = p.prices; DELIVERY = p.shipping;
-      if (p.maxItems) MAX_ITEMS = p.maxItems;
-      if (p.maxQty) MAX_QTY = p.maxQty;
-      renderCart();
-    }
-  }).catch(function(){ /* keep the defaults if the server can't be reached */ });
+  function loadPricing(){
+    return fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
+      if (p && p.pricePerPanelCents > 0){
+        PRICING = { pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers || [] };
+        if (p.maxItems) MAX_ITEMS = p.maxItems;
+        if (p.maxQty) MAX_QTY = p.maxQty;
+        renderCart();
+      }
+    }).catch(function(){ /* keep the fallback if the server can't be reached */ });
+  }
+  loadPricing();
 
   var LAYOUT_NAME = { single: "Single", duo: "Duo", quad: "Quad" };
+  var draftQty = 1;   // copies of the print still on screen, carried over when it is added
   var cart = [];      // { layoutKey, arrangement, orientation, panels, qty, dpi, lowResConfirmed, original, files, thumb }
-  function rands(n){ return "R" + Number(n).toLocaleString("en-US", { maximumFractionDigits:2 }); }
+  function rands(cents){ return "R" + (cents / 100).toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+  function plural(n, word){ return n + " " + word + (n === 1 ? "" : "s"); }
   function describe(it){
     return LAYOUT_NAME[it.layoutKey] + " · " + (it.orientation === "landscape" ? "Landscape" : "Portrait") +
       (it.layoutKey === "duo" ? ", " + (it.arrangement === "stacked" ? "stacked" : "side by side") : "");
   }
-  function lineTotal(it){ return PRICES[it.layoutKey] * it.panels * it.qty; }
   // The print on screen right now counts towards the total and is added automatically when the order is placed.
   function draftItem(){
-    return imageOk ? { layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: 1, thumb: previewImg.src, draft: true } : null;
+    return imageOk ? { layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: draftQty, thumb: previewImg.src, draft: true } : null;
+  }
+  function allItems(){ var d = draftItem(); return d ? cart.concat([d]) : cart.slice(); }
+  // Volume discount is based on every physical panel in the order: all prints, all copies.
+  function currentQuote(items){
+    var panels = (items || allItems()).reduce(function(s, it){ return s + it.panels * it.qty; }, 0);
+    return VantaPricing.quote(panels, PRICING);
   }
   function el(tag, cls, text){
     var n = document.createElement(tag);
@@ -319,61 +332,74 @@
     var img = el("img", "cart-thumb"); img.src = it.thumb; img.alt = "";
     var info = el("div");
     info.appendChild(el("div", "cart-title", "Print " + no + " · " + describe(it)));
-    info.appendChild(el("div", "cart-sub", it.panels + " panel" + (it.panels > 1 ? "s" : "") + " · " + rands(PRICES[it.layoutKey]) + " per panel"));
+    info.appendChild(el("div", "cart-sub", it.qty > 1 ? plural(it.panels, "panel") + " per copy × " + it.qty + " copies" : plural(it.panels, "panel")));
     row.appendChild(img); row.appendChild(info);
-    row.appendChild(el("div", "cart-price", rands(lineTotal(it))));
+    row.appendChild(el("div", "cart-price", plural(it.panels * it.qty, "panel")));
+    // Copies and Remove work the same for the print still on screen (draft) as for added prints.
+    function setQty(n){ if (it.draft) draftQty = n; else it.qty = n; renderCart(); }
     var actions = el("div", "cart-actions");
-    if (it.draft){
-      actions.appendChild(el("span", "cart-tag", "On screen now · included when you order"));
-    } else {
-      var qty = el("div", "qty"); qty.setAttribute("role", "group"); qty.setAttribute("aria-label", "Copies of print " + no);
-      var minus = el("button", null, "−"); minus.type = "button"; minus.setAttribute("aria-label", "One copy fewer"); minus.disabled = it.qty <= 1;
-      var out = el("output", null, String(it.qty)); out.setAttribute("aria-live", "polite");
-      var plus = el("button", null, "+"); plus.type = "button"; plus.setAttribute("aria-label", "One copy more"); plus.disabled = it.qty >= MAX_QTY;
-      minus.addEventListener("click", function(){ if (it.qty > 1){ it.qty--; renderCart(); } });
-      plus.addEventListener("click", function(){ if (it.qty < MAX_QTY){ it.qty++; renderCart(); } });
-      qty.appendChild(minus); qty.appendChild(out); qty.appendChild(plus);
-      var remove = el("button", "cart-remove", "Remove"); remove.type = "button";
-      remove.addEventListener("click", function(){
-        vantaDialog({ title: "Remove print", message: "Remove print " + no + " (" + describe(it) + ") from your order?", ok: "Remove", cancel: "Keep it" }).then(function(yes){
-          if (!yes) return;
-          it.files.forEach(function(f){ URL.revokeObjectURL(f.url); });
-          cart.splice(cart.indexOf(it), 1);
-          renderCart();
-        });
+    var qty = el("div", "qty"); qty.setAttribute("role", "group"); qty.setAttribute("aria-label", "Copies of print " + no);
+    var minus = el("button", null, "−"); minus.type = "button"; minus.setAttribute("aria-label", "One copy fewer"); minus.disabled = it.qty <= 1;
+    var out = el("output", null, String(it.qty)); out.setAttribute("aria-live", "polite");
+    var plus = el("button", null, "+"); plus.type = "button"; plus.setAttribute("aria-label", "One copy more"); plus.disabled = it.qty >= MAX_QTY;
+    minus.addEventListener("click", function(){ if (it.qty > 1) setQty(it.qty - 1); });
+    plus.addEventListener("click", function(){ if (it.qty < MAX_QTY) setQty(it.qty + 1); });
+    qty.appendChild(minus); qty.appendChild(out); qty.appendChild(plus);
+    var remove = el("button", "cart-remove", "Remove"); remove.type = "button";
+    remove.addEventListener("click", function(){
+      vantaDialog({ title: "Remove print", message: "Remove print " + no + " (" + describe(it) + ") from your order?", ok: "Remove", cancel: "Keep it" }).then(function(yes){
+        if (!yes) return;
+        if (it.draft){ resetOrder(); clearEditor(); return; }
+        it.files.forEach(function(f){ URL.revokeObjectURL(f.url); });
+        cart.splice(cart.indexOf(it), 1);
+        renderCart();
       });
-      actions.appendChild(qty); actions.appendChild(remove);
-    }
+    });
+    actions.appendChild(qty); actions.appendChild(remove);
     row.appendChild(actions);
+    if (it.draft) row.appendChild(el("span", "cart-tag", "On screen now · included when you order"));
     return row;
   }
-  function priceRow(label, value){
-    var row = el("div", "price-row");
-    row.appendChild(el("span", "label", label));
+  function priceRow(label, value, note, cls){
+    var row = el("div", "price-row" + (cls ? " " + cls : ""));
+    var l = el("span", "label", label);
+    if (note) l.appendChild(el("span", "price-note", note));
+    row.appendChild(l);
     row.appendChild(el("span", null, value));
     return row;
   }
   function renderCart(){
-    var draft = draftItem();
-    var all = draft ? cart.concat([draft]) : cart.slice();
+    var all = allItems();
 
     cartEl.innerHTML = "";
     if (!all.length) cartEl.appendChild(el("p", "cart-empty", "No prints yet. Upload an image to start your order."));
     all.forEach(function(it, i){ cartEl.appendChild(cartRow(it, i + 1)); });
 
+    // Order summary as customers see it: panels at the advertised price, then the multi-panel discount
+    // (handling is only charged once) and the volume discount, free delivery, total.
+    var q = currentQuote(all);
     priceLinesEl.innerHTML = "";
-    var subtotal = 0;
-    all.forEach(function(it, i){
-      var count = it.panels * it.qty, line = lineTotal(it);
-      subtotal += line;
-      var label = all.length > 1 ? "Print " + (i + 1) + " · " + LAYOUT_NAME[it.layoutKey] + (it.qty > 1 ? " × " + it.qty : "") : "VANTA A4 metal print" + (it.qty > 1 ? " × " + it.qty : "");
-      priceLinesEl.appendChild(priceRow(label, (count > 1 ? count + " × " + rands(PRICES[it.layoutKey]) + " = " : "") + rands(line)));
-    });
-    if (!all.length) priceLinesEl.appendChild(priceRow("VANTA A4 metal print", rands(0)));
-    var deliveryEl = document.getElementById("price-delivery");
-    deliveryEl.textContent = DELIVERY > 0 ? rands(DELIVERY) : "Free";
-    deliveryEl.classList.toggle("free", !(DELIVERY > 0));
-    document.getElementById("price-total").textContent = rands(subtotal + (all.length ? DELIVERY : 0));
+    priceLinesEl.appendChild(priceRow(
+      q.panels ? plural(q.panels, "A4 metal panel") : "A4 metal panels",
+      rands(q.advertisedCents),
+      q.panels > 1 ? q.panels + " × " + rands(q.advertisedPerPanelCents) : null));
+    if (q.multiPanelSavingCents){
+      priceLinesEl.appendChild(priceRow("Multi-panel discount", "−" + rands(q.multiPanelSavingCents), rands(q.handlingCents) + " off every panel after the first", "discount"));
+    }
+    if (q.discountCents){
+      priceLinesEl.appendChild(priceRow("Volume discount (" + q.discountPct + "%)", "−" + rands(q.discountCents), "For orders of " + q.discountFromPanels + "+ panels", "discount"));
+    }
+    if (q.multiPanelSavingCents || q.discountCents){
+      priceLinesEl.appendChild(priceRow("Subtotal after discounts", rands(q.totalCents)));
+    }
+    document.getElementById("price-total").textContent = rands(q.totalCents);
+
+    discountNoteEl.innerHTML = "";
+    if (q.discountPct) discountNoteEl.appendChild(el("p", "discount-yes", "You're receiving a " + q.discountPct + "% volume discount on your order!"));
+    if (q.panels && q.nextTier && q.nextTier.panelsNeeded <= 3){
+      discountNoteEl.appendChild(el("p", "discount-next", "Add " + plural(q.nextTier.panelsNeeded, "more panel") + " to get a " + q.nextTier.pct + "% volume discount."));
+    }
+    discountNoteEl.hidden = !discountNoteEl.childNodes.length;
 
     var full = cart.length >= MAX_ITEMS;
     addBtn.disabled = !imageOk || full;
@@ -398,7 +424,7 @@
     addBtn.textContent = "Preparing print files…";
     return generatePrintFiles().then(function(result){
       cart.push({
-        layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: 1,
+        layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: draftQty,
         dpi: result.dpi, lowResConfirmed: lowRes && lowResCheck.checked, original: originalFile, files: result.files, thumb: result.thumb
       });
       clearEditor();
@@ -533,6 +559,8 @@
     var f = new FormData();
     ["firstName", "lastName", "email", "phone", "address", "city", "postal"].forEach(function(n){ f.set(n, els[n].value); });
     f.set("rights", els.rights.checked ? "true" : "false");
+    // The total the customer saw; the server recalculates it and refuses the order if prices changed meanwhile.
+    f.set("expectedTotalCents", String(currentQuote(items).totalCents));
     f.set("items", JSON.stringify(items.map(function(it){
       return {
         layout: it.layoutKey, orientation: it.orientation, arrangement: it.layoutKey === "duo" ? it.arrangement : null,
@@ -547,7 +575,11 @@
     });
     return fetch("/api/orders", { method: "POST", body: f }).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(data){
-        if (!res.ok) throw new Error(data.error || "We couldn't save your order. Please try again.");
+        if (!res.ok){
+          var err = new Error(data.error || "We couldn't save your order. Please try again.");
+          err.pricesChanged = !!data.pricesChanged;
+          throw err;
+        }
         return data;
       });
     });
@@ -582,6 +614,7 @@
         renderCart();
       });
     }).catch(function(err){
+      if (err && err.pricesChanged) loadPricing();
       vantaDialog({ title:"Order not sent", message: err && err.message ? err.message : "We couldn't save your order. Please try again." });
     }).then(function(){
       submitBtn.disabled = false;

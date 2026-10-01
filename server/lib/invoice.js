@@ -8,14 +8,18 @@ const nl = (s) => esc(s).replace(/\n/g, "<br>");
 function renderInvoice(o) {
   const s = getSettings();
   const balance = o.total_cents - (o.paid_cents - o.refunded_cents);
-  // One line per print: qty = copies, unit price = one copy (price per panel x panels).
+  // Shown the way the customer saw it on the order form (pricing.js): every panel at the advertised
+  // price (panel price + handling), then the multi-panel discount (handling is charged once) and the
+  // volume discount. These always add up to the stored total.
+  const advertised = o.price_per_panel_cents + o.shipping_cents;
+  const multiPanel = o.panels > 1 ? (o.panels - 1) * o.shipping_cents : 0;
   const items = db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY item_no").all(o.id);
   const itemRows = items.map((i) => {
     const orient = i.orientation === "landscape" ? "landscape" : "portrait";
     const arrangement = i.arrangement === "stacked" ? ", stacked" : "";
     return `<tr>
-        <td>VANTA A4 custom metal print${items.length > 1 ? " (print " + i.item_no + ")" : ""}<div class="muted small">${esc(LAYOUT_LABEL[i.layout] || i.layout)} layout, ${i.panels} panel${i.panels > 1 ? "s" : ""} at ${money(i.price_per_panel_cents)} each, ${orient}${arrangement}. Magnetic mounting included.</div></td>
-        <td class="r">${i.qty}</td><td class="r">${money(i.price_per_panel_cents * i.panels)}</td><td class="r">${money(i.line_cents)}</td>
+        <td>VANTA A4 custom metal print${items.length > 1 ? " (print " + i.item_no + ")" : ""}<div class="muted small">${esc(LAYOUT_LABEL[i.layout] || i.layout)} layout, ${i.panels} panel${i.panels > 1 ? "s" : ""} at ${money(advertised)} each, ${orient}${arrangement}. Magnetic mounting included.</div></td>
+        <td class="r">${i.qty}</td><td class="r">${money(advertised * i.panels)}</td><td class="r">${money(advertised * i.panels * i.qty)}</td>
       </tr>`;
   }).join("");
   const paidLabel = PAYMENT_LABEL[o.payment_status] || o.payment_status;
@@ -89,11 +93,14 @@ function renderInvoice(o) {
     <thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr></thead>
     <tbody>
       ${itemRows}
-      <tr><td>Delivery (${esc(o.delivery_method)})</td><td class="r">1</td><td class="r">${o.shipping_cents ? money(o.shipping_cents) : "Free"}</td><td class="r">${o.shipping_cents ? money(o.shipping_cents) : "Free"}</td></tr>
+      <tr><td>Delivery (${esc(o.delivery_method)})</td><td class="r">1</td><td class="r">Free</td><td class="r">Free</td></tr>
     </tbody>
   </table>
 
   <div class="totals">
+    ${multiPanel || o.discount_cents ? `<div><span>Subtotal (${o.panels} panel${o.panels > 1 ? "s" : ""})</span><span>${money(advertised * o.panels)}</span></div>` : ""}
+    ${multiPanel ? `<div><span>Multi-panel discount</span><span>&minus;${money(multiPanel)}</span></div>` : ""}
+    ${o.discount_cents ? `<div><span>Volume discount (${o.discount_pct}%)</span><span>&minus;${money(o.discount_cents)}</span></div>` : ""}
     <div class="grand"><span>Total</span><span>${money(o.total_cents)}</span></div>
     <div><span>Paid</span><span>${money(o.paid_cents)}</span></div>
     ${o.refunded_cents ? `<div><span>Refunded</span><span>&minus;${money(o.refunded_cents)}</span></div>` : ""}

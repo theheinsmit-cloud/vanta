@@ -1,7 +1,6 @@
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR } = require("./config");
-const { PRICED_LAYOUTS } = require("./lib/constants");
 
 const db = new DatabaseSync(path.join(DATA_DIR, "vanta.db"));
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
@@ -138,8 +137,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 `);
 
 const DEFAULT_SETTINGS = {
-  price_per_panel_cents: "54900",
-  shipping_cents: "0",          // delivery is advertised free; courier cost lives in unit costs
+  // Pricing (see site/assets/js/pricing.js): one price per A4 panel, plus a handling charge once per
+  // order that customers see as free delivery, minus a volume discount on the panel subtotal.
+  price_per_panel_cents: "35000",
+  shipping_cents: "10000",      // handling, once per order, never discounted
+  volume_tiers: JSON.stringify([{ minPanels: 5, pct: 5 }, { minPanels: 10, pct: 10 }, { minPanels: 20, pct: 15 }]),
   deduct_stock_on: "in_production",   // in_production | completed | off
   next_order_number: "1001",
   business_name: "VANTA",
@@ -153,9 +155,13 @@ const DEFAULT_SETTINGS = {
 };
 const seedSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
-// Per-layout prices start from the old single price_per_panel_cents, so nothing changes until the owner edits them.
-const basePrice = db.prepare("SELECT value FROM settings WHERE key = 'price_per_panel_cents'").get().value;
-for (const k of PRICED_LAYOUTS) seedSetting.run("price_" + k + "_cents", basePrice);
+// Per-layout prices were replaced by one price per panel plus volume discounts.
+db.exec("DELETE FROM settings WHERE key IN ('price_single_cents', 'price_duo_cents', 'price_quad_cents')");
+
+// Volume discount applied to each order, frozen when it was placed (product_cents stays the pre-discount panel subtotal).
+for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"]]) {
+  if (!db.prepare("PRAGMA table_info(orders)").all().some((c) => c.name === col)) db.exec("ALTER TABLE orders ADD COLUMN " + col + " " + def);
+}
 
 // Known repeatable costs are confirmed; everything else is editable but flagged unconfirmed at R0.
 const COST_SEEDS = [

@@ -3,6 +3,7 @@ const path = require("path");
 const { db, tx, now, getSetting, setSetting } = require("../db");
 const { UPLOAD_DIR } = require("../config");
 const { STATUS_KEYS, STATUS_LABEL, PIPELINE, LAYOUT_PANELS, LAYOUT_LABEL, PRICED_LAYOUTS, PAYMENT_LABEL } = require("./constants");
+const { quote, cleanTiers } = require("../../site/assets/js/pricing");
 const { rand, clampStr, slug, safeFilename, saDate, isDateStr, HttpError } = require("./util");
 
 /* ---------------- images ---------------- */
@@ -30,10 +31,15 @@ function imageInfo(buf) {
 }
 
 /* ---------------- pricing & cost snapshot ---------------- */
+// Current pricing config, in the shape pricing.js expects. shipping_cents holds the per-order handling charge.
 function getPricing() {
-  const perPanelCents = {};
-  for (const k of PRICED_LAYOUTS) perPanelCents[k] = parseInt(getSetting("price_" + k + "_cents"), 10);
-  return { perPanelCents, shippingCents: parseInt(getSetting("shipping_cents"), 10) };
+  let tiers = [];
+  try { tiers = cleanTiers(JSON.parse(getSetting("volume_tiers") || "[]")); } catch (e) { tiers = []; }
+  return {
+    pricePerPanelCents: parseInt(getSetting("price_per_panel_cents"), 10),
+    handlingCents: parseInt(getSetting("shipping_cents"), 10),
+    tiers
+  };
 }
 
 // Freezes the unit costs that apply right now. Later price changes never touch stored orders.
@@ -73,19 +79,18 @@ function createOrder(f, items) {
   if (items.length > MAX_ITEMS) throw new HttpError(400, "An order can hold up to " + MAX_ITEMS + " different prints.");
 
   // Prices are always recalculated here from the Pricing page, never taken from the browser.
-  const { perPanelCents, shippingCents } = getPricing();
+  const pricing = getPricing();
+  const pricePerPanelCents = pricing.pricePerPanelCents;
   const lines = items.map((it, i) => {
     const layout = String(it.layout || "");
     const panels = LAYOUT_PANELS[layout];
     const label = "Print " + (i + 1);
-    if (!panels) throw new HttpError(400, label + ": unknown layout.");
+    if (!panels || !PRICED_LAYOUTS.includes(layout)) throw new HttpError(400, label + ": unknown layout.");
     if (!["portrait", "landscape"].includes(it.orientation)) throw new HttpError(400, label + ": unknown orientation.");
     const qty = Number(it.qty);
     if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) throw new HttpError(400, label + ": quantity must be between 1 and " + MAX_QTY + ".");
     if (!it.original) throw new HttpError(400, label + ": the original image is missing.");
     if (!Array.isArray(it.panels) || it.panels.length !== panels) throw new HttpError(400, label + ": the number of print files doesn't match the layout.");
-    const pricePerPanelCents = perPanelCents[layout];
-    if (!pricePerPanelCents) throw new HttpError(400, label + ": this layout isn't available.");
     return {
       ...it, panelFiles: it.panels, layout, panels, qty, pricePerPanelCents, lineCents: pricePerPanelCents * panels * qty,
       arrangement: layout === "duo" && ["side", "stacked"].includes(it.arrangement) ? it.arrangement : null,
@@ -93,9 +98,13 @@ function createOrder(f, items) {
     };
   });
 
+  // Volume discount comes from the total physical panels: every copy of every print counts.
   const totalPanels = lines.reduce((s, l) => s + l.panels * l.qty, 0);
-  const productCents = lines.reduce((s, l) => s + l.lineCents, 0);
-  const totalCents = productCents + shippingCents;
+  const q = quote(totalPanels, pricing);
+  // The browser sends the total it showed; if prices changed meanwhile, stop rather than charge a surprise amount.
+  if (f.expectedTotalCents != null && Number(f.expectedTotalCents) !== q.totalCents) {
+    throw new HttpError(409, "Our prices have just been updated. Please check your new order total and place the order again.");
+  }
   const snapshot = buildCostSnapshot(totalPanels);
   const dpis = lines.map((l) => l.dpi).filter((d) => d != null);
   const one = lines.length === 1 ? lines[0] : null;
@@ -110,12 +119,12 @@ function createOrder(f, items) {
     const res = db.prepare(`INSERT INTO orders
       (order_number, created_at, first_name, last_name, email, phone, address, city, postal_code,
        layout, orientation, arrangement, panels, delivery_method,
-       price_per_panel_cents, product_cents, shipping_cents, total_cents,
+       price_per_panel_cents, product_cents, discount_pct, discount_cents, shipping_cents, total_cents,
        cost_snapshot, est_cost_cents, dpi_estimate, low_res_confirmed, rights_confirmed)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(orderNumber, placedAt, first, last, email, phone, address, city, postal,
         one ? one.layout : "mixed", one ? one.orientation : "mixed", one ? one.arrangement : null, totalPanels, "Courier",
-        one && one.qty === 1 ? one.pricePerPanelCents : 0, productCents, shippingCents, totalCents,
+        pricePerPanelCents, q.baseCents, q.discountPct, q.discountCents, q.handlingCents, q.totalCents,
         JSON.stringify(snapshot), snapshot.totalCents, dpis.length ? Math.min(...dpis) : null, lines.some((l) => l.lowResConfirmed) ? 1 : 0, 1);
     const id = Number(res.lastInsertRowid);
 
@@ -203,6 +212,7 @@ function orderView(o) {
     deliveryMethod: o.delivery_method, deliveryStatus: deliveryStatus(o),
     money: {
       pricePerPanel: rand(o.price_per_panel_cents), product: rand(o.product_cents), shipping: rand(o.shipping_cents),
+      discountPct: o.discount_pct, discount: rand(o.discount_cents), discountedProduct: rand(o.product_cents - o.discount_cents),
       total: rand(o.total_cents), paid: rand(f.paid), refunded: rand(f.refunded), net: rand(f.net),
       estCost: rand(o.est_cost_cents), costCounted: f.costCounted,
       contribution: f.contribution == null ? null : rand(f.contribution)
