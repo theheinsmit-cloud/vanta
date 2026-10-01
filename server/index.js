@@ -34,7 +34,7 @@ app.use((err, req, res, next) => {
   res.status(500).type("text").send("Server error");
 });
 
-app.listen(cfg.PORT, () => {
+app.listen(cfg.PORT, "0.0.0.0", () => {
   console.log("VANTA running on http://localhost:" + cfg.PORT);
   if (!auth.isConfigured()) console.log("Admin login is disabled. Run: npm run set-admin");
 });
