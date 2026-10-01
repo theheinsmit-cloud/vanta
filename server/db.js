@@ -141,6 +141,10 @@ const DEFAULT_SETTINGS = {
   // order that customers see as free delivery, minus a volume discount on the panel subtotal.
   price_per_panel_cents: "35000",
   shipping_cents: "10000",      // handling, once per order, never discounted
+  // Time-limited special: a lower price per panel until promo_ends_at (ISO). Empty price = no special.
+  promo_name: "Launch special",
+  promo_price_per_panel_cents: "25000",
+  promo_ends_at: "2026-12-31T22:00:00.000Z",   // = 1 Jan 2027 00:00 South African time
   volume_tiers: JSON.stringify([{ minPanels: 5, pct: 5 }, { minPanels: 10, pct: 10 }, { minPanels: 20, pct: 15 }]),
   deduct_stock_on: "in_production",   // in_production | completed | off
   next_order_number: "1001",
@@ -159,7 +163,7 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
 db.exec("DELETE FROM settings WHERE key IN ('price_single_cents', 'price_duo_cents', 'price_quad_cents')");
 
 // Volume discount applied to each order, frozen when it was placed (product_cents stays the pre-discount panel subtotal).
-for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"]]) {
+for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"], ["promo_name", "TEXT"], ["promo_saving_cents", "INTEGER NOT NULL DEFAULT 0"]]) {
   if (!db.prepare("PRAGMA table_info(orders)").all().some((c) => c.name === col)) db.exec("ALTER TABLE orders ADD COLUMN " + col + " " + def);
 }
 
@@ -190,8 +194,11 @@ const INVENTORY_SEEDS = [
   ["magnet_piece",    "Magnetic mounting pieces",  "pcs", 0, 20, 1, 0],
   ["packaging_set",   "Packaging sets",            "sets", 0, 0, 0, 1]
 ];
-const seedInv = db.prepare("INSERT OR IGNORE INTO inventory_items (key,name,unit,qty,low_threshold,per_panel,per_order) VALUES (?,?,?,?,?,?,?)");
-for (const row of INVENTORY_SEEDS) seedInv.run(...row);
+// Seed only an empty table, so items the owner removed don't come back on restart.
+if (!db.prepare("SELECT COUNT(*) AS n FROM inventory_items").get().n) {
+  const seedInv = db.prepare("INSERT INTO inventory_items (key,name,unit,qty,low_threshold,per_panel,per_order) VALUES (?,?,?,?,?,?,?)");
+  for (const row of INVENTORY_SEEDS) seedInv.run(...row);
+}
 
 // Orders from before the cart held exactly one print: give each its item row and link its files.
 if (!db.prepare("PRAGMA table_info(order_files)").all().some((c) => c.name === "item_id")) {

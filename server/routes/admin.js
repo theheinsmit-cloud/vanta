@@ -155,6 +155,8 @@ api.post("/finance/costs/:id/delete", h((req, res) => res.json(fin.deleteCostIte
 
 /* inventory */
 api.get("/inventory", h((req, res) => res.json(fin.listInventory())));
+api.post("/inventory/add", h((req, res) => res.json(fin.addInventoryItem(req.body))));
+api.post("/inventory/:id/delete", h((req, res) => res.json(fin.deleteInventoryItem(id(req)))));
 api.post("/inventory/:id/adjust", h((req, res) => res.json(fin.adjustStock(id(req), req.body.delta, req.body.reason))));
 api.post("/inventory/:id", h((req, res) => res.json(fin.updateInventoryItem(id(req), req.body))));
 

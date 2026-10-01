@@ -11,7 +11,9 @@ function renderInvoice(o) {
   // Shown the way the customer saw it on the order form (pricing.js): every panel at the advertised
   // price (panel price + handling), then the multi-panel discount (handling is charged once) and the
   // volume discount. These always add up to the stored total.
-  const advertised = o.price_per_panel_cents + o.shipping_cents;
+  // A special that ran when the order was placed shows as its own saving off the regular advertised price.
+  const regular = o.price_per_panel_cents + (o.panels ? Math.round((o.promo_saving_cents || 0) / o.panels) : 0);
+  const advertised = regular + o.shipping_cents;
   const multiPanel = o.panels > 1 ? (o.panels - 1) * o.shipping_cents : 0;
   const items = db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY item_no").all(o.id);
   const itemRows = items.map((i) => {
@@ -98,7 +100,8 @@ function renderInvoice(o) {
   </table>
 
   <div class="totals">
-    ${multiPanel || o.discount_cents ? `<div><span>Subtotal (${o.panels} panel${o.panels > 1 ? "s" : ""})</span><span>${money(advertised * o.panels)}</span></div>` : ""}
+    ${multiPanel || o.discount_cents || o.promo_saving_cents ? `<div><span>Subtotal (${o.panels} panel${o.panels > 1 ? "s" : ""})</span><span>${money(advertised * o.panels)}</span></div>` : ""}
+    ${o.promo_saving_cents ? `<div><span>${esc(o.promo_name || "Special")}</span><span>&minus;${money(o.promo_saving_cents)}</span></div>` : ""}
     ${multiPanel ? `<div><span>Multi-panel discount</span><span>&minus;${money(multiPanel)}</span></div>` : ""}
     ${o.discount_cents ? `<div><span>Volume discount (${o.discount_pct}%)</span><span>&minus;${money(o.discount_cents)}</span></div>` : ""}
     <div class="grand"><span>Total</span><span>${money(o.total_cents)}</span></div>

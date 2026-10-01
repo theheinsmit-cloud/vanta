@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const { getPricing, createOrder, imageInfo, MAX_ITEMS, MAX_QTY } = require("../lib/orders");
 const { HttpError } = require("../lib/util");
+const { activePromo } = require("../../site/assets/js/pricing");
 const { sameOrigin } = require("../auth");
 
 const router = express.Router();
@@ -28,7 +29,8 @@ router.get("/pricing", (req, res) => {
   // Config for pricing.js in the browser (cents). The server recalculates every order regardless.
   const p = getPricing();
   res.set("Cache-Control", "no-store");
-  res.json({ pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers, maxItems: MAX_ITEMS, maxQty: MAX_QTY });
+  // promo is only sent while it runs (server clock); pages also drop it themselves at endsAt.
+  res.json({ pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers, promo: activePromo(p), maxItems: MAX_ITEMS, maxQty: MAX_QTY });
 });
 
 router.post("/orders", orderLimit, (req, res, next) => {

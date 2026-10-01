@@ -206,9 +206,38 @@ function updateInventoryItem(id, f) {
   const item = db.prepare("SELECT * FROM inventory_items WHERE id = ?").get(id);
   if (!item) throw new HttpError(404, "Item not found.");
   const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : fallback; };
-  db.prepare("UPDATE inventory_items SET name=?, low_threshold=?, per_panel=?, per_order=? WHERE id=?")
-    .run(clampStr(f.name, 80) || item.name, num(f.lowThreshold, item.low_threshold), num(f.perPanel, item.per_panel), num(f.perOrder, item.per_order), id);
+  db.prepare("UPDATE inventory_items SET name=?, unit=?, low_threshold=?, per_panel=?, per_order=? WHERE id=?")
+    .run(clampStr(f.name, 80) || item.name, clampStr(f.unit, 20) || item.unit, num(f.lowThreshold, item.low_threshold), num(f.perPanel, item.per_panel), num(f.perOrder, item.per_order), id);
   return listInventory();
+}
+function addInventoryItem(f) {
+  const name = clampStr(f.name, 80);
+  if (!name) throw new HttpError(400, "Please name the item.");
+  const num = (v, label) => {
+    if (v === "" || v == null) return 0;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw new HttpError(400, label + " must be zero or more.");
+    return n;
+  };
+  const qty = num(f.qty, "Stock on hand"), low = num(f.lowThreshold, "Low-stock warning");
+  const perPanel = num(f.perPanel, "Used per panel"), perOrder = num(f.perOrder, "Used per order");
+  return tx(() => {
+    let key = slug(name) || "item", n = 1;
+    while (db.prepare("SELECT 1 FROM inventory_items WHERE key = ?").get(key)) key = (slug(name) || "item") + "-" + ++n;
+    const id = Number(db.prepare("INSERT INTO inventory_items (key,name,unit,qty,low_threshold,per_panel,per_order) VALUES (?,?,?,?,?,?,?)")
+      .run(key, name, clampStr(f.unit, 20) || "pcs", qty, low, perPanel, perOrder).lastInsertRowid);
+    if (qty) db.prepare("INSERT INTO stock_movements (item_id, at, delta, reason) VALUES (?,?,?,?)").run(id, now(), qty, "Opening stock");
+    return listInventory();
+  });
+}
+// Removes the item and its stock history (orders themselves are untouched).
+function deleteInventoryItem(id) {
+  return tx(() => {
+    if (!db.prepare("SELECT 1 FROM inventory_items WHERE id = ?").get(id)) throw new HttpError(404, "Item not found.");
+    db.prepare("DELETE FROM stock_movements WHERE item_id = ?").run(id);
+    db.prepare("DELETE FROM inventory_items WHERE id = ?").run(id);
+    return listInventory();
+  });
 }
 
 /* ---------------- settings ---------------- */
@@ -245,10 +274,19 @@ function savePricing(f) {
   if (handling == null || handling < 0) throw new HttpError(400, "Delivery & handling must be zero or more.");
   let tiers;
   try { tiers = cleanTiers(f.tiers || []); } catch (e) { throw new HttpError(400, e.message); }
+  // Special offer: optional lower price per panel until the end of promoLastDay (South African time).
+  const promoPrice = f.promoPrice === "" || f.promoPrice == null ? 0 : toCents(f.promoPrice);
+  if (promoPrice == null || promoPrice < 0) throw new HttpError(400, "Special price must be zero or more.");
+  if (promoPrice && promoPrice >= price) throw new HttpError(400, "The special price must be lower than the normal price per panel.");
+  if (promoPrice && !isDateStr(f.promoLastDay)) throw new HttpError(400, "Choose the last day of the special.");
+  const promoEndsAt = promoPrice ? new Date(f.promoLastDay + "T00:00:00+02:00").getTime() + 24 * 3600 * 1000 : 0;
   return tx(() => {
     setSetting("price_per_panel_cents", price);
     setSetting("shipping_cents", handling);
     setSetting("volume_tiers", JSON.stringify(tiers));
+    setSetting("promo_name", clampStr(f.promoName, 40) || "Special");
+    setSetting("promo_price_per_panel_cents", promoPrice);
+    setSetting("promo_ends_at", promoPrice ? new Date(promoEndsAt).toISOString() : "");
     return pricingView();
   });
 }
@@ -303,6 +341,6 @@ function dashboard() {
 
 module.exports = {
   incomeSummary, listExpenses, expenseTotals, createExpense, updateExpense, voidExpense, getReceipt,
-  listCostItems, saveCostItems, addCostItem, deleteCostItem, pricingView, savePricing, listInventory, adjustStock, updateInventoryItem,
+  listCostItems, saveCostItems, addCostItem, deleteCostItem, pricingView, savePricing, listInventory, adjustStock, updateInventoryItem, addInventoryItem, deleteInventoryItem,
   settingsView, saveSettings, dashboard, EXPENSE_CATEGORIES, EXPENSE_TYPES
 };

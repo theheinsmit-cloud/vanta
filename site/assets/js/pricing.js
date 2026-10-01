@@ -32,9 +32,23 @@
     return sortTiers(out);
   }
 
+  // A time-limited special price per panel, e.g. { name, pricePerPanelCents, endsAt (ISO) }.
+  // Active until endsAt; after that every page falls back to the regular price by itself.
+  function activePromo(cfg, nowMs) {
+    var p = cfg && cfg.promo;
+    if (!p || !(p.pricePerPanelCents > 0) || p.pricePerPanelCents >= cfg.pricePerPanelCents) return null;
+    var now = nowMs == null ? Date.now() : nowMs;
+    var ends = Date.parse(p.endsAt);
+    return isFinite(ends) && now < ends ? p : null;
+  }
+
   // panels = total physical panels in the order (every copy of every print counts).
-  function quote(panels, cfg) {
+  // nowMs decides whether the special applies (defaults to now).
+  function quote(panels, cfg, nowMs) {
     panels = Math.max(0, Math.floor(Number(panels) || 0));
+    var promo = activePromo(cfg, nowMs);
+    var regularCents = cfg.pricePerPanelCents;
+    cfg = { pricePerPanelCents: promo ? promo.pricePerPanelCents : regularCents, handlingCents: cfg.handlingCents, tiers: cfg.tiers };
     var tiers = sortTiers(cfg.tiers);
     var applied = null, next = null;
     tiers.forEach(function (t) {
@@ -45,12 +59,16 @@
     var baseCents = panels * cfg.pricePerPanelCents;
     var discountCents = Math.round(baseCents * pct / 100);
     var handlingCents = panels > 0 ? cfg.handlingCents : 0;
-    // What customers see: every panel advertised at price + handling (e.g. R350 + R100 = R450).
-    // Handling is only charged once, so panels 2..n show it back as a "multi-panel discount".
-    var advertisedPerPanelCents = cfg.pricePerPanelCents + cfg.handlingCents;
+    // What customers see: every panel advertised at the REGULAR price + handling (e.g. R350 + R100 = R450).
+    // Handling is only charged once, so panels 2..n show it back as a "multi-panel discount",
+    // and a running special shows as its own saving per panel.
+    var advertisedPerPanelCents = regularCents + cfg.handlingCents;
     return {
       panels: panels,
-      pricePerPanelCents: cfg.pricePerPanelCents,
+      pricePerPanelCents: cfg.pricePerPanelCents,   // the price actually charged per panel
+      regularPricePerPanelCents: regularCents,
+      promo: promo ? { name: promo.name, pricePerPanelCents: promo.pricePerPanelCents, endsAt: promo.endsAt } : null,
+      promoSavingCents: promo ? panels * (regularCents - promo.pricePerPanelCents) : 0,
       baseCents: baseCents,                       // panels x price, before discount
       handlingCents: handlingCents,               // once per order, never discounted
       listCents: baseCents + handlingCents,       // panels x price + handling, before volume discount
@@ -66,5 +84,10 @@
     };
   }
 
-  return { quote: quote, cleanTiers: cleanTiers };
+  // "31 December": the last day a special runs, in South African time.
+  function promoLastDay(promo) {
+    return new Date(Date.parse(promo.endsAt) - 1).toLocaleDateString("en-ZA", { timeZone: "Africa/Johannesburg", day: "numeric", month: "long" });
+  }
+
+  return { quote: quote, cleanTiers: cleanTiers, activePromo: activePromo, promoLastDay: promoLastDay };
 });

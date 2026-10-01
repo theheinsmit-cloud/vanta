@@ -38,7 +38,8 @@ function getPricing() {
   return {
     pricePerPanelCents: parseInt(getSetting("price_per_panel_cents"), 10),
     handlingCents: parseInt(getSetting("shipping_cents"), 10),
-    tiers
+    tiers,
+    promo: { name: getSetting("promo_name") || "Special", pricePerPanelCents: parseInt(getSetting("promo_price_per_panel_cents"), 10) || 0, endsAt: getSetting("promo_ends_at") || "" }
   };
 }
 
@@ -80,7 +81,7 @@ function createOrder(f, items) {
 
   // Prices are always recalculated here from the Pricing page, never taken from the browser.
   const pricing = getPricing();
-  const pricePerPanelCents = pricing.pricePerPanelCents;
+  const placedMs = Date.now();   // decides whether a time-limited special applies
   const lines = items.map((it, i) => {
     const layout = String(it.layout || "");
     const panels = LAYOUT_PANELS[layout];
@@ -92,7 +93,7 @@ function createOrder(f, items) {
     if (!it.original) throw new HttpError(400, label + ": the original image is missing.");
     if (!Array.isArray(it.panels) || it.panels.length !== panels) throw new HttpError(400, label + ": the number of print files doesn't match the layout.");
     return {
-      ...it, panelFiles: it.panels, layout, panels, qty, pricePerPanelCents, lineCents: pricePerPanelCents * panels * qty,
+      ...it, panelFiles: it.panels, layout, panels, qty,
       arrangement: layout === "duo" && ["side", "stacked"].includes(it.arrangement) ? it.arrangement : null,
       dpi: Number.isFinite(it.dpi) ? Math.max(0, Math.min(2000, Math.round(it.dpi))) : null
     };
@@ -100,7 +101,9 @@ function createOrder(f, items) {
 
   // Volume discount comes from the total physical panels: every copy of every print counts.
   const totalPanels = lines.reduce((s, l) => s + l.panels * l.qty, 0);
-  const q = quote(totalPanels, pricing);
+  const q = quote(totalPanels, pricing, placedMs);
+  const pricePerPanelCents = q.pricePerPanelCents;
+  for (const l of lines) { l.pricePerPanelCents = pricePerPanelCents; l.lineCents = pricePerPanelCents * l.panels * l.qty; }
   // The browser sends the total it showed; if prices changed meanwhile, stop rather than charge a surprise amount.
   if (f.expectedTotalCents != null && Number(f.expectedTotalCents) !== q.totalCents) {
     throw new HttpError(409, "Our prices have just been updated. Please check your new order total and place the order again.");
@@ -119,12 +122,12 @@ function createOrder(f, items) {
     const res = db.prepare(`INSERT INTO orders
       (order_number, created_at, first_name, last_name, email, phone, address, city, postal_code,
        layout, orientation, arrangement, panels, delivery_method,
-       price_per_panel_cents, product_cents, discount_pct, discount_cents, shipping_cents, total_cents,
+       price_per_panel_cents, product_cents, discount_pct, discount_cents, promo_name, promo_saving_cents, shipping_cents, total_cents,
        cost_snapshot, est_cost_cents, dpi_estimate, low_res_confirmed, rights_confirmed)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(orderNumber, placedAt, first, last, email, phone, address, city, postal,
         one ? one.layout : "mixed", one ? one.orientation : "mixed", one ? one.arrangement : null, totalPanels, "Courier",
-        pricePerPanelCents, q.baseCents, q.discountPct, q.discountCents, q.handlingCents, q.totalCents,
+        pricePerPanelCents, q.baseCents, q.discountPct, q.discountCents, q.promo ? q.promo.name : null, q.promoSavingCents, q.handlingCents, q.totalCents,
         JSON.stringify(snapshot), snapshot.totalCents, dpis.length ? Math.min(...dpis) : null, lines.some((l) => l.lowResConfirmed) ? 1 : 0, 1);
     const id = Number(res.lastInsertRowid);
 
@@ -213,6 +216,7 @@ function orderView(o) {
     money: {
       pricePerPanel: rand(o.price_per_panel_cents), product: rand(o.product_cents), shipping: rand(o.shipping_cents),
       discountPct: o.discount_pct, discount: rand(o.discount_cents), discountedProduct: rand(o.product_cents - o.discount_cents),
+      promoName: o.promo_name, promoSaving: rand(o.promo_saving_cents), regularPricePerPanel: rand(o.price_per_panel_cents + (o.panels ? o.promo_saving_cents / o.panels : 0)),
       total: rand(o.total_cents), paid: rand(f.paid), refunded: rand(f.refunded), net: rand(f.net),
       estCost: rand(o.est_cost_cents), costCounted: f.costCounted,
       contribution: f.contribution == null ? null : rand(f.contribution)

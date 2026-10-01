@@ -293,7 +293,7 @@
   function loadPricing(){
     return fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
       if (p && p.pricePerPanelCents > 0){
-        PRICING = { pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers || [] };
+        PRICING = { pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers || [], promo: p.promo || null };
         if (p.maxItems) MAX_ITEMS = p.maxItems;
         if (p.maxQty) MAX_QTY = p.maxQty;
         renderCart();
@@ -383,18 +383,23 @@
       q.panels ? plural(q.panels, "A4 metal panel") : "A4 metal panels",
       rands(q.advertisedCents),
       q.panels > 1 ? q.panels + " × " + rands(q.advertisedPerPanelCents) : null));
+    if (q.promoSavingCents){
+      priceLinesEl.appendChild(priceRow(q.promo.name, "−" + rands(q.promoSavingCents), rands(q.regularPricePerPanelCents - q.pricePerPanelCents) + " off every panel until " + VantaPricing.promoLastDay(q.promo), "discount"));
+    }
     if (q.multiPanelSavingCents){
       priceLinesEl.appendChild(priceRow("Multi-panel discount", "−" + rands(q.multiPanelSavingCents), rands(q.handlingCents) + " off every panel after the first", "discount"));
     }
     if (q.discountCents){
       priceLinesEl.appendChild(priceRow("Volume discount (" + q.discountPct + "%)", "−" + rands(q.discountCents), "For orders of " + q.discountFromPanels + "+ panels", "discount"));
     }
-    if (q.multiPanelSavingCents || q.discountCents){
+    if (q.promoSavingCents || q.multiPanelSavingCents || q.discountCents){
       priceLinesEl.appendChild(priceRow("Subtotal after discounts", rands(q.totalCents)));
     }
     document.getElementById("price-total").textContent = rands(q.totalCents);
 
     discountNoteEl.innerHTML = "";
+    var promo = VantaPricing.activePromo(PRICING);
+    if (promo) discountNoteEl.appendChild(el("p", "discount-yes", promo.name + ": " + rands(promo.pricePerPanelCents + PRICING.handlingCents) + " per panel (normally " + rands(PRICING.pricePerPanelCents + PRICING.handlingCents) + ") until " + VantaPricing.promoLastDay(promo) + "."));
     if (q.discountPct) discountNoteEl.appendChild(el("p", "discount-yes", "You're receiving a " + q.discountPct + "% volume discount on your order!"));
     if (q.panels && q.nextTier && q.nextTier.panelsNeeded <= 3){
       discountNoteEl.appendChild(el("p", "discount-next", "Add " + plural(q.nextTier.panelsNeeded, "more panel") + " to get a " + q.nextTier.pct + "% volume discount."));
