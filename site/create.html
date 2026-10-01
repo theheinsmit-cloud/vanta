@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create Your VANTA</title>
+<meta name="description" content="Upload your image, preview it on an A4 metal print, and order your VANTA.">
+<meta name="theme-color" content="#0b0a08">
+<link rel="icon" type="image/png" href="assets/logo.png">
+<!-- DEPLOY STEP: replace with the live absolute URL before shipping -->
+<meta property="og:title" content="Create Your VANTA">
+<meta property="og:description" content="Upload your image and order your premium metal print.">
+<meta property="og:image" content="PLACEHOLDER_LIVE_URL/assets/hero-interior.jpg">
+<meta property="og:url" content="PLACEHOLDER_LIVE_URL/create.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400..900;1,400..900&family=Jost:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<nav class="site-nav" aria-label="Primary">
+  <a class="nav-brand" href="index.html">
+    <img src="assets/logo.png" alt="" width="34" height="34">
+    <span>VANTA</span>
+  </a>
+  <button class="nav-toggle" aria-expanded="false" aria-label="Open menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="showcase.html">Showcase</a></li>
+    <li><a href="how-it-works.html">How it works</a></li>
+    <li><a href="faq.html">FAQ</a></li>
+    <li><a href="contact.html">Contact</a></li>
+    <li><a class="nav-cta" href="create.html" aria-current="page">Create your VANTA</a></li>
+  </ul>
+</nav>
+
+<main id="main" tabindex="-1">
+
+<div class="page-hero" style="padding-bottom:2rem">
+  <p class="eyebrow reveal">Create your VANTA</p>
+  <h1 class="reveal">Your image. Your print.</h1>
+  <p class="reveal">Upload your image, position it, and see exactly what you'll get before you pay. No account needed.</p>
+</div>
+
+<section class="band-y" style="padding-top:0">
+  <div class="wrap">
+    <div class="configurator">
+
+      <div class="config-left">
+
+        <div id="upload-zone" class="upload-zone" tabindex="0" role="button" aria-label="Upload an image">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <h3>Drag and drop your image</h3>
+          <p>or click to browse. JPG or PNG.</p>
+          <input id="file-input" type="file" accept="image/jpeg,image/png">
+        </div>
+
+        <div class="preview-wrap">
+          <p class="order-step-note">Choose a layout</p>
+          <div class="layout-picker" role="radiogroup" aria-label="Choose a layout">
+            <label class="layout-option">
+              <input type="radio" name="layout" value="single" checked>
+              <span class="layout-card">
+                <span class="layout-preview" style="grid-template-columns:1fr"><span></span></span>
+                <span class="name">Single</span>
+              </span>
+            </label>
+            <label class="layout-option">
+              <input type="radio" name="layout" value="duo">
+              <span class="layout-card">
+                <span class="layout-preview" style="grid-template-columns:1fr 1fr"><span></span><span></span></span>
+                <span class="name">Duo</span>
+              </span>
+            </label>
+            <label class="layout-option">
+              <input type="radio" name="layout" value="quad">
+              <span class="layout-card">
+                <span class="layout-preview" style="grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr"><span></span><span></span><span></span><span></span></span>
+                <span class="name">Quad</span>
+              </span>
+            </label>
+          </div>
+
+          <div id="arrangement-group" hidden>
+            <p class="order-step-note">Duo arrangement</p>
+            <div class="layout-picker" role="radiogroup" aria-label="Choose how the two panels are arranged">
+              <label class="layout-option">
+                <input type="radio" name="arrangement" value="side" checked>
+                <span class="layout-card">
+                  <span class="layout-preview" style="grid-template-columns:1fr 1fr"><span></span><span></span></span>
+                  <span class="name">Side by side</span>
+                </span>
+              </label>
+              <label class="layout-option">
+                <input type="radio" name="arrangement" value="stacked">
+                <span class="layout-card">
+                  <span class="layout-preview" style="grid-template-columns:1fr;grid-template-rows:1fr 1fr"><span></span><span></span></span>
+                  <span class="name">Stacked</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <p class="order-step-note">Panel orientation</p>
+          <div class="layout-picker" role="radiogroup" aria-label="Choose a panel orientation">
+            <label class="layout-option">
+              <input type="radio" name="orientation" value="portrait" checked>
+              <span class="layout-card">
+                <span class="layout-preview" style="grid-template-columns:1fr"><span style="aspect-ratio:210/297;width:26px;height:auto;justify-self:center"></span></span>
+                <span class="name">Portrait</span>
+              </span>
+            </label>
+            <label class="layout-option">
+              <input type="radio" name="orientation" value="landscape">
+              <span class="layout-card">
+                <span class="layout-preview" style="grid-template-columns:1fr"><span style="aspect-ratio:297/210;width:38px;height:auto;align-self:center;justify-self:center"></span></span>
+                <span class="name">Landscape</span>
+              </span>
+            </label>
+          </div>
+          <p id="panel-count" class="panel-count-note"></p>
+
+          <p class="order-step-note">Position your image</p>
+          <div class="crop-shell">
+            <div id="crop-frame" class="crop-frame">
+              <img id="preview-img" alt="Your uploaded image, cropped to the print area">
+              <div id="grid-overlay" class="grid-overlay" aria-hidden="true"></div>
+            </div>
+            <div class="crop-meta">
+              <p class="form-note">Drag inside the frame to reposition. Each A4 panel prints separately and sits edge to edge on your wall, so together they read as one piece.</p>
+              <div class="zoom-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="10" cy="10" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+                <input id="zoom-slider" type="range" min="1" max="3" step="0.01" value="1" aria-label="Zoom">
+              </div>
+              <div id="res-badge" class="res-badge"></div>
+              <p id="res-note" class="form-note"></p>
+              <button id="change-image" class="change-image" type="button">Use a different image</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <form id="order-form" class="order-panel">
+        <h2>Your order</h2>
+
+        <fieldset>
+          <legend>Delivery details</legend>
+          <div class="field-row">
+            <div class="field">
+              <label for="of-first">First name</label>
+              <input id="of-first" name="firstName" type="text" required placeholder="Jane">
+            </div>
+            <div class="field">
+              <label for="of-last">Last name</label>
+              <input id="of-last" name="lastName" type="text" required placeholder="Smith">
+            </div>
+          </div>
+          <div class="field">
+            <label for="of-email">Email</label>
+            <input id="of-email" name="email" type="email" required placeholder="you@example.com">
+          </div>
+          <div class="field">
+            <label for="of-phone">Phone</label>
+            <input id="of-phone" name="phone" type="tel" required placeholder="082 123 4567">
+          </div>
+          <div class="field">
+            <label for="of-address">Delivery address</label>
+            <input id="of-address" name="address" type="text" required placeholder="Street address">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="of-city">City</label>
+              <input id="of-city" name="city" type="text" required placeholder="Cape Town">
+            </div>
+            <div class="field">
+              <label for="of-postal">Postal code</label>
+              <input id="of-postal" name="postal" type="text" required placeholder="8001">
+            </div>
+          </div>
+        </fieldset>
+
+        <div id="low-res-confirm" class="low-res-confirm">
+          <div class="checkfield" style="margin:0">
+            <input id="low-res-check" type="checkbox">
+            <label for="low-res-check">I understand this image may print softer than ideal at this size, and I'd like to proceed anyway.</label>
+          </div>
+        </div>
+
+        <div class="checkfield">
+          <input id="of-rights" name="rights" type="checkbox" required>
+          <label for="of-rights">I own this image, or have the right to reproduce it, and I'm not infringing on anyone else's copyright by having it printed.</label>
+        </div>
+
+        <div class="price-row"><span class="label">VANTA A4 metal print</span><span id="price-product"></span></div>
+        <div class="price-row"><span class="label">Delivery</span><span id="price-delivery"></span></div>
+        <div class="price-row total"><span class="label">Total</span><span id="price-total"></span></div>
+
+        <button id="submit-order" class="btn btn-primary" type="submit" style="width:100%;margin-top:1.4rem">Proceed to payment</button>
+        <p class="form-note" style="text-align:center;margin-top:.9rem">Payment provider isn't connected yet, this captures your order details so checkout can be wired up next.</p>
+      </form>
+
+      <div id="order-success" class="form-success" style="grid-column:1 / -1">
+        <h3>Your order is in.</h3>
+        <p id="order-ref" class="eyebrow" style="margin:.4rem 0 1rem"></p>
+        <p>We've captured your image, positioning, and delivery details, and generated the actual print-ready file for every panel below, cropped from the exact position you set, at the sharpest resolution your image supports. No manual cropping, no guesswork, no risk of a mismatched panel.</p>
+
+        <div id="print-files" class="print-files"></div>
+        <p class="form-note" style="margin-top:1rem">Mount left to right, top to bottom, in this order. Files are named to match.</p>
+
+        <p class="form-note" style="margin-top:1.8rem;padding-top:1.4rem;border-top:1px solid var(--hairline)">Your order has been saved and sent to our production queue. Online payment isn't connected yet, so we'll confirm payment with you directly before production starts. A copy of your print files is above for your records.</p>
+        <a class="btn btn-ghost" href="index.html" style="margin-top:1.2rem">Back to home</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="footer-grid">
+    <div>
+      <div class="footer-brand">
+        <img src="assets/logo.png" alt="" width="30" height="30">
+        <span>VANTA</span>
+      </div>
+      <p style="max-width:32ch">Premium custom metal prints. Your image, made permanent. South Africa.</p>
+    </div>
+    <div class="footer-col">
+      <h4>Explore</h4>
+      <a href="showcase.html">Showcase</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="faq.html">FAQ</a>
+      <a href="create.html">Create your VANTA</a>
+    </div>
+    <div class="footer-col">
+      <h4>Contact</h4>
+      <a href="contact.html">Get in touch</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <span>© 2026 VANTA. All rights reserved.</span>
+    <span>Made in South Africa.</span>
+  </div>
+</footer>
+
+<script src="assets/js/site.js"></script>
+<script src="assets/js/create.js"></script>
+</body>
+</html>

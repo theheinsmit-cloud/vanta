@@ -1,0 +1,192 @@
+const path = require("path");
+const { DatabaseSync } = require("node:sqlite");
+const { DATA_DIR } = require("./config");
+
+const db = new DatabaseSync(path.join(DATA_DIR, "vanta.db"));
+db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+
+// All money is stored as integer cents (ZAR) so totals never drift.
+db.exec(`
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_number TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  first_name TEXT NOT NULL, last_name TEXT NOT NULL,
+  email TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '',
+  address TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL DEFAULT '',
+  layout TEXT NOT NULL, orientation TEXT NOT NULL, arrangement TEXT,
+  panels INTEGER NOT NULL,
+  delivery_method TEXT NOT NULL DEFAULT 'Courier',
+  price_per_panel_cents INTEGER NOT NULL,
+  product_cents INTEGER NOT NULL,
+  shipping_cents INTEGER NOT NULL,
+  total_cents INTEGER NOT NULL,
+  payment_status TEXT NOT NULL DEFAULT 'pending',
+  payment_method TEXT, payment_reference TEXT, paid_at TEXT,
+  paid_cents INTEGER NOT NULL DEFAULT 0,
+  refunded_cents INTEGER NOT NULL DEFAULT 0, refunded_at TEXT, refund_reason TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  production_started_at TEXT, ready_to_ship_at TEXT, shipped_at TEXT, completed_at TEXT, cancelled_at TEXT,
+  courier TEXT, tracking_number TEXT, dispatch_date TEXT,
+  cost_snapshot TEXT NOT NULL,
+  est_cost_cents INTEGER NOT NULL,
+  admin_notes TEXT NOT NULL DEFAULT '',
+  stock_deducted INTEGER NOT NULL DEFAULT 0,
+  dpi_estimate INTEGER, low_res_confirmed INTEGER NOT NULL DEFAULT 0, rights_confirmed INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_orders_email ON orders(email);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+
+CREATE TABLE IF NOT EXISTS order_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  kind TEXT NOT NULL,              -- 'original' | 'panel'
+  panel_index INTEGER,             -- 1..N in mounting order (left to right, top to bottom)
+  panel_label TEXT,
+  stored_name TEXT NOT NULL,
+  download_name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  width INTEGER, height INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_files_order ON order_files(order_id);
+
+CREATE TABLE IF NOT EXISTS order_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  at TEXT NOT NULL,
+  type TEXT NOT NULL,              -- placed | status | payment | refund | shipping | note | stock | archive
+  from_value TEXT, to_value TEXT, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_order ON order_events(order_id);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL,
+  cost_type TEXT NOT NULL,         -- 'business' (startup/overhead) | 'production' (variable)
+  amount_cents INTEGER NOT NULL,
+  supplier TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  receipt_name TEXT, receipt_stored TEXT,
+  created_at TEXT NOT NULL,
+  voided INTEGER NOT NULL DEFAULT 0, void_reason TEXT, voided_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cost_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  basis TEXT NOT NULL,             -- 'per_panel' | 'per_order'
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'pcs',
+  qty REAL NOT NULL DEFAULT 0,
+  low_threshold REAL NOT NULL DEFAULT 0,
+  per_panel REAL NOT NULL DEFAULT 0,
+  per_order REAL NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES inventory_items(id),
+  at TEXT NOT NULL,
+  delta REAL NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  order_id INTEGER REFERENCES orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  csrf TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  ip TEXT
+);
+`);
+
+const DEFAULT_SETTINGS = {
+  price_per_panel_cents: "54900",
+  shipping_cents: "9900",
+  deduct_stock_on: "in_production",   // in_production | completed | off
+  next_order_number: "1001",
+  business_name: "VANTA",
+  business_legal_name: "",
+  business_address: "",
+  business_email: "hello@vanta.co.za",
+  business_phone: "",
+  vat_number: "",
+  bank_details: "",
+  invoice_notes: "Thank you for your order."
+};
+const seedSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
+for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
+
+// Known repeatable costs are confirmed; everything else is editable but flagged unconfirmed at R0.
+const COST_SEEDS = [
+  ["aluminium_panel",   "Aluminium panel",                     "per_panel", 2500, 1, 10, ""],
+  ["sublimation_print", "Outsourced sublimation print",        "per_panel", 7500, 1, 20, ""],
+  ["magnetic_mount",    "Magnetic mounting pieces",            "per_panel", 1154, 1, 30, ""],
+  ["heat_tape",         "Heat tape",                           "per_panel", 0,    0, 40, "Not confirmed yet"],
+  ["protective_leaf",   "Protective leaf / sheet",             "per_panel", 0,    0, 50, "Not confirmed yet"],
+  ["other_mounting",    "Other mounting components",           "per_panel", 0,    0, 60, "Not confirmed yet"],
+  ["labour_wastage",    "Labour & wastage allowance",          "per_panel", 0,    0, 70, "Not confirmed yet"],
+  ["packaging",         "Packaging (one setup per order)",     "per_order", 0,    0, 80, "Charged once per order, not per panel"],
+  ["courier_cost",      "Courier cost (what we pay)",          "per_order", 0,    0, 90, "Not confirmed yet"]
+];
+const seedCost = db.prepare("INSERT OR IGNORE INTO cost_items (key,label,basis,amount_cents,confirmed,active,sort,note) VALUES (?,?,?,?,?,1,?,?)");
+for (const [key, label, basis, cents, confirmed, sort, note] of COST_SEEDS) seedCost.run(key, label, basis, cents, confirmed, sort, note);
+
+const INVENTORY_SEEDS = [
+  ["aluminium_blank", "Aluminium blanks (A4)",     "pcs", 0, 10, 1, 0],
+  ["magnet_piece",    "Magnetic mounting pieces",  "pcs", 0, 20, 1, 0],
+  ["packaging_set",   "Packaging sets",            "sets", 0, 0, 0, 1]
+];
+const seedInv = db.prepare("INSERT OR IGNORE INTO inventory_items (key,name,unit,qty,low_threshold,per_panel,per_order) VALUES (?,?,?,?,?,?,?)");
+for (const row of INVENTORY_SEEDS) seedInv.run(...row);
+
+function tx(fn) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch (e) { /* already rolled back */ }
+    throw err;
+  }
+}
+
+const now = () => new Date().toISOString();
+
+function getSettings() {
+  const out = {};
+  for (const row of db.prepare("SELECT key, value FROM settings").all()) out[row.key] = row.value;
+  return out;
+}
+function getSetting(key) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  return row ? row.value : DEFAULT_SETTINGS[key];
+}
+function setSetting(key, value) {
+  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, String(value));
+}
+
+module.exports = { db, tx, now, getSettings, getSetting, setSetting, DEFAULT_SETTINGS };
