@@ -1,6 +1,7 @@
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR } = require("./config");
+const { PRICED_LAYOUTS } = require("./lib/constants");
 
 const db = new DatabaseSync(path.join(DATA_DIR, "vanta.db"));
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
@@ -57,6 +58,20 @@ CREATE TABLE IF NOT EXISTS order_files (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_files_order ON order_files(order_id);
+
+-- One row per print in an order (a cart). Each print has its own image, layout, crop and copies.
+CREATE TABLE IF NOT EXISTS order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  item_no INTEGER NOT NULL,        -- 1..N as shown to the customer
+  layout TEXT NOT NULL, orientation TEXT NOT NULL, arrangement TEXT,
+  panels INTEGER NOT NULL,         -- panels in ONE copy of this print
+  qty INTEGER NOT NULL DEFAULT 1,  -- identical copies
+  price_per_panel_cents INTEGER NOT NULL,
+  line_cents INTEGER NOT NULL,     -- price_per_panel x panels x qty
+  dpi_estimate INTEGER, low_res_confirmed INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
 
 CREATE TABLE IF NOT EXISTS order_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,7 +139,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 const DEFAULT_SETTINGS = {
   price_per_panel_cents: "54900",
-  shipping_cents: "9900",
+  shipping_cents: "0",          // delivery is advertised free; courier cost lives in unit costs
   deduct_stock_on: "in_production",   // in_production | completed | off
   next_order_number: "1001",
   business_name: "VANTA",
@@ -138,6 +153,9 @@ const DEFAULT_SETTINGS = {
 };
 const seedSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
+// Per-layout prices start from the old single price_per_panel_cents, so nothing changes until the owner edits them.
+const basePrice = db.prepare("SELECT value FROM settings WHERE key = 'price_per_panel_cents'").get().value;
+for (const k of PRICED_LAYOUTS) seedSetting.run("price_" + k + "_cents", basePrice);
 
 // Known repeatable costs are confirmed; everything else is editable but flagged unconfirmed at R0.
 const COST_SEEDS = [
@@ -151,8 +169,15 @@ const COST_SEEDS = [
   ["packaging",         "Packaging (one setup per order)",     "per_order", 0,    0, 80, "Charged once per order, not per panel"],
   ["courier_cost",      "Courier cost (what we pay)",          "per_order", 0,    0, 90, "Not confirmed yet"]
 ];
-const seedCost = db.prepare("INSERT OR IGNORE INTO cost_items (key,label,basis,amount_cents,confirmed,active,sort,note) VALUES (?,?,?,?,?,1,?,?)");
-for (const [key, label, basis, cents, confirmed, sort, note] of COST_SEEDS) seedCost.run(key, label, basis, cents, confirmed, sort, note);
+// qty = how many of the item go into one panel (per_panel) or one order (per_order).
+if (!db.prepare("PRAGMA table_info(cost_items)").all().some((c) => c.name === "qty")) {
+  db.exec("ALTER TABLE cost_items ADD COLUMN qty REAL NOT NULL DEFAULT 1");
+}
+// Seed only an empty table, so lines the owner removed don't come back on restart.
+if (!db.prepare("SELECT COUNT(*) AS n FROM cost_items").get().n) {
+  const seedCost = db.prepare("INSERT INTO cost_items (key,label,basis,amount_cents,confirmed,active,sort,note) VALUES (?,?,?,?,?,1,?,?)");
+  for (const [key, label, basis, cents, confirmed, sort, note] of COST_SEEDS) seedCost.run(key, label, basis, cents, confirmed, sort, note);
+}
 
 const INVENTORY_SEEDS = [
   ["aluminium_blank", "Aluminium blanks (A4)",     "pcs", 0, 10, 1, 0],
@@ -161,6 +186,16 @@ const INVENTORY_SEEDS = [
 ];
 const seedInv = db.prepare("INSERT OR IGNORE INTO inventory_items (key,name,unit,qty,low_threshold,per_panel,per_order) VALUES (?,?,?,?,?,?,?)");
 for (const row of INVENTORY_SEEDS) seedInv.run(...row);
+
+// Orders from before the cart held exactly one print: give each its item row and link its files.
+if (!db.prepare("PRAGMA table_info(order_files)").all().some((c) => c.name === "item_id")) {
+  db.exec("ALTER TABLE order_files ADD COLUMN item_id INTEGER REFERENCES order_items(id)");
+}
+for (const o of db.prepare("SELECT * FROM orders WHERE id NOT IN (SELECT order_id FROM order_items)").all()) {
+  const r = db.prepare(`INSERT INTO order_items (order_id, item_no, layout, orientation, arrangement, panels, qty, price_per_panel_cents, line_cents, dpi_estimate, low_res_confirmed)
+    VALUES (?,1,?,?,?,?,1,?,?,?,?)`).run(o.id, o.layout, o.orientation, o.arrangement, o.panels, o.price_per_panel_cents, o.product_cents, o.dpi_estimate, o.low_res_confirmed);
+  db.prepare("UPDATE order_files SET item_id = ? WHERE order_id = ? AND item_id IS NULL").run(Number(r.lastInsertRowid), o.id);
+}
 
 function tx(fn) {
   db.exec("BEGIN IMMEDIATE");

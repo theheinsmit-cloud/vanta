@@ -1,4 +1,4 @@
-const { getSettings } = require("../db");
+const { db, getSettings } = require("../db");
 const { LAYOUT_LABEL, PAYMENT_LABEL } = require("./constants");
 const { esc, saDate } = require("./util");
 
@@ -7,10 +7,17 @@ const nl = (s) => esc(s).replace(/\n/g, "<br>");
 
 function renderInvoice(o) {
   const s = getSettings();
-  const layout = LAYOUT_LABEL[o.layout] || o.layout;
   const balance = o.total_cents - (o.paid_cents - o.refunded_cents);
-  const orient = o.orientation === "landscape" ? "landscape" : "portrait";
-  const arrangement = o.arrangement === "stacked" ? ", stacked" : "";
+  // One line per print: qty = copies, unit price = one copy (price per panel x panels).
+  const items = db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY item_no").all(o.id);
+  const itemRows = items.map((i) => {
+    const orient = i.orientation === "landscape" ? "landscape" : "portrait";
+    const arrangement = i.arrangement === "stacked" ? ", stacked" : "";
+    return `<tr>
+        <td>VANTA A4 custom metal print${items.length > 1 ? " (print " + i.item_no + ")" : ""}<div class="muted small">${esc(LAYOUT_LABEL[i.layout] || i.layout)} layout, ${i.panels} panel${i.panels > 1 ? "s" : ""} at ${money(i.price_per_panel_cents)} each, ${orient}${arrangement}. Magnetic mounting included.</div></td>
+        <td class="r">${i.qty}</td><td class="r">${money(i.price_per_panel_cents * i.panels)}</td><td class="r">${money(i.line_cents)}</td>
+      </tr>`;
+  }).join("");
   const paidLabel = PAYMENT_LABEL[o.payment_status] || o.payment_status;
 
   return `<!DOCTYPE html>
@@ -81,11 +88,8 @@ function renderInvoice(o) {
   <table>
     <thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr></thead>
     <tbody>
-      <tr>
-        <td>VANTA A4 custom metal print<div class="muted small">${esc(layout)} layout, ${o.panels} panel${o.panels > 1 ? "s" : ""}, ${orient}${arrangement}. Magnetic mounting included.</div></td>
-        <td class="r">${o.panels}</td><td class="r">${money(o.price_per_panel_cents)}</td><td class="r">${money(o.product_cents)}</td>
-      </tr>
-      <tr><td>Delivery (${esc(o.delivery_method)})</td><td class="r">1</td><td class="r">${money(o.shipping_cents)}</td><td class="r">${money(o.shipping_cents)}</td></tr>
+      ${itemRows}
+      <tr><td>Delivery (${esc(o.delivery_method)})</td><td class="r">1</td><td class="r">${o.shipping_cents ? money(o.shipping_cents) : "Free"}</td><td class="r">${o.shipping_cents ? money(o.shipping_cents) : "Free"}</td></tr>
     </tbody>
   </table>
 

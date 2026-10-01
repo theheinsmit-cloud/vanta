@@ -25,6 +25,11 @@
   var arrangementInputs = document.querySelectorAll('input[name="arrangement"]');
   var arrangementGroup = document.getElementById("arrangement-group");
   var panelCountEl = document.getElementById("panel-count");
+  var addBtn = document.getElementById("add-to-order");
+  var cartEl = document.getElementById("cart");
+  var priceLinesEl = document.getElementById("price-lines");
+  var uploadTitle = document.getElementById("upload-title");
+  var uploadSub = document.getElementById("upload-sub");
 
   if (!uploadZone) return;
 
@@ -137,7 +142,7 @@
 
   function handleFile(file){
     if (!/^image\/(jpeg|png)$/.test(file.type)){
-      alert("Please upload a JPG or PNG file.");
+      vantaDialog({ title:"Unsupported file", message:"Please upload a JPG or PNG file." });
       return;
     }
     resetOrder();
@@ -154,6 +159,7 @@
         zoomSlider.value = 1;
         layoutImage();
         updateResolution();
+        renderCart();
         configurator.scrollIntoView({ behavior: "smooth", block: "start" });
       };
       previewImg.src = e.target.result;
@@ -161,12 +167,21 @@
     reader.readAsDataURL(file);
   }
 
-  changeImageBtn.addEventListener("click", function(){
-    resetOrder();
+  // Back to the empty upload state (after "Use a different image", or once a print is added to the cart).
+  function clearEditor(){
     uploadZone.hidden = false;
     previewWrap.classList.remove("active");
     imageOk = false;
+    lowRes = false;
+    originalFile = null;
     fileInput.value = "";
+    lowResConfirm.classList.remove("show");
+    lowResCheck.checked = false;
+    renderCart();
+  }
+  changeImageBtn.addEventListener("click", function(){
+    resetOrder();
+    clearEditor();
   });
 
   /* ---------- crop: cover-fit base scale, user zoom, drag to pan ----------
@@ -267,20 +282,136 @@
     if (!lowRes) lowResCheck.checked = false;
   }
 
-  /* ---------- price (defaults below; the live figures come from the server) ---------- */
-  var PRICE_PER_PANEL = 549;
-  var DELIVERY = 99;
+  /* ---------- cart: one order can hold several prints, each with its own image, layout, crop and copies ----------
+     Prices are defaults until the server answers; the server recalculates every order anyway. */
+  var PRICES = { single: 449, duo: 449, quad: 449 }; // price per panel, per layout (sliding scale)
+  var DELIVERY = 0;
+  var MAX_ITEMS = 10, MAX_QTY = 20;
   fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
-    if (p && p.pricePerPanel > 0){ PRICE_PER_PANEL = p.pricePerPanel; DELIVERY = p.shipping; updatePrice(); }
+    if (p && p.prices){
+      PRICES = p.prices; DELIVERY = p.shipping;
+      if (p.maxItems) MAX_ITEMS = p.maxItems;
+      if (p.maxQty) MAX_QTY = p.maxQty;
+      renderCart();
+    }
   }).catch(function(){ /* keep the defaults if the server can't be reached */ });
-  function updatePrice(){
-    var panels = layout.cols * layout.rows;
-    var subtotal = panels * PRICE_PER_PANEL;
-    document.getElementById("price-product").textContent =
-      (panels > 1 ? panels + " × R" + PRICE_PER_PANEL + " = " : "") + "R" + subtotal;
-    document.getElementById("price-delivery").textContent = "R" + DELIVERY;
-    document.getElementById("price-total").textContent = "R" + (subtotal + DELIVERY);
+
+  var LAYOUT_NAME = { single: "Single", duo: "Duo", quad: "Quad" };
+  var cart = [];      // { layoutKey, arrangement, orientation, panels, qty, dpi, lowResConfirmed, original, files, thumb }
+  function rands(n){ return "R" + Number(n).toLocaleString("en-US", { maximumFractionDigits:2 }); }
+  function describe(it){
+    return LAYOUT_NAME[it.layoutKey] + " · " + (it.orientation === "landscape" ? "Landscape" : "Portrait") +
+      (it.layoutKey === "duo" ? ", " + (it.arrangement === "stacked" ? "stacked" : "side by side") : "");
   }
+  function lineTotal(it){ return PRICES[it.layoutKey] * it.panels * it.qty; }
+  // The print on screen right now counts towards the total and is added automatically when the order is placed.
+  function draftItem(){
+    return imageOk ? { layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: 1, thumb: previewImg.src, draft: true } : null;
+  }
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function cartRow(it, no){
+    var row = el("div", "cart-item" + (it.draft ? " pending" : ""));
+    var img = el("img", "cart-thumb"); img.src = it.thumb; img.alt = "";
+    var info = el("div");
+    info.appendChild(el("div", "cart-title", "Print " + no + " · " + describe(it)));
+    info.appendChild(el("div", "cart-sub", it.panels + " panel" + (it.panels > 1 ? "s" : "") + " · " + rands(PRICES[it.layoutKey]) + " per panel"));
+    row.appendChild(img); row.appendChild(info);
+    row.appendChild(el("div", "cart-price", rands(lineTotal(it))));
+    var actions = el("div", "cart-actions");
+    if (it.draft){
+      actions.appendChild(el("span", "cart-tag", "On screen now · included when you order"));
+    } else {
+      var qty = el("div", "qty"); qty.setAttribute("role", "group"); qty.setAttribute("aria-label", "Copies of print " + no);
+      var minus = el("button", null, "−"); minus.type = "button"; minus.setAttribute("aria-label", "One copy fewer"); minus.disabled = it.qty <= 1;
+      var out = el("output", null, String(it.qty)); out.setAttribute("aria-live", "polite");
+      var plus = el("button", null, "+"); plus.type = "button"; plus.setAttribute("aria-label", "One copy more"); plus.disabled = it.qty >= MAX_QTY;
+      minus.addEventListener("click", function(){ if (it.qty > 1){ it.qty--; renderCart(); } });
+      plus.addEventListener("click", function(){ if (it.qty < MAX_QTY){ it.qty++; renderCart(); } });
+      qty.appendChild(minus); qty.appendChild(out); qty.appendChild(plus);
+      var remove = el("button", "cart-remove", "Remove"); remove.type = "button";
+      remove.addEventListener("click", function(){
+        vantaDialog({ title: "Remove print", message: "Remove print " + no + " (" + describe(it) + ") from your order?", ok: "Remove", cancel: "Keep it" }).then(function(yes){
+          if (!yes) return;
+          it.files.forEach(function(f){ URL.revokeObjectURL(f.url); });
+          cart.splice(cart.indexOf(it), 1);
+          renderCart();
+        });
+      });
+      actions.appendChild(qty); actions.appendChild(remove);
+    }
+    row.appendChild(actions);
+    return row;
+  }
+  function priceRow(label, value){
+    var row = el("div", "price-row");
+    row.appendChild(el("span", "label", label));
+    row.appendChild(el("span", null, value));
+    return row;
+  }
+  function renderCart(){
+    var draft = draftItem();
+    var all = draft ? cart.concat([draft]) : cart.slice();
+
+    cartEl.innerHTML = "";
+    if (!all.length) cartEl.appendChild(el("p", "cart-empty", "No prints yet. Upload an image to start your order."));
+    all.forEach(function(it, i){ cartEl.appendChild(cartRow(it, i + 1)); });
+
+    priceLinesEl.innerHTML = "";
+    var subtotal = 0;
+    all.forEach(function(it, i){
+      var count = it.panels * it.qty, line = lineTotal(it);
+      subtotal += line;
+      var label = all.length > 1 ? "Print " + (i + 1) + " · " + LAYOUT_NAME[it.layoutKey] + (it.qty > 1 ? " × " + it.qty : "") : "VANTA A4 metal print" + (it.qty > 1 ? " × " + it.qty : "");
+      priceLinesEl.appendChild(priceRow(label, (count > 1 ? count + " × " + rands(PRICES[it.layoutKey]) + " = " : "") + rands(line)));
+    });
+    if (!all.length) priceLinesEl.appendChild(priceRow("VANTA A4 metal print", rands(0)));
+    var deliveryEl = document.getElementById("price-delivery");
+    deliveryEl.textContent = DELIVERY > 0 ? rands(DELIVERY) : "Free";
+    deliveryEl.classList.toggle("free", !(DELIVERY > 0));
+    document.getElementById("price-total").textContent = rands(subtotal + (all.length ? DELIVERY : 0));
+
+    var full = cart.length >= MAX_ITEMS;
+    addBtn.disabled = !imageOk || full;
+    addBtn.textContent = full ? "Order is full (" + MAX_ITEMS + " prints)" : "Add to order";
+    uploadTitle.textContent = cart.length ? "Add another print" : "Drag and drop your image";
+    uploadSub.textContent = cart.length ? "Drop your next image here, or click to browse. JPG or PNG." : "or click to browse. JPG or PNG.";
+  }
+  function updatePrice(){ renderCart(); }
+
+  // Turns the print on screen into a cart item (with its print files). Resolves true when added.
+  function addCurrentToCart(){
+    if (!imageOk) return Promise.resolve(false);
+    if (cart.length >= MAX_ITEMS){
+      vantaDialog({ title: "Order is full", message: "One order can hold up to " + MAX_ITEMS + " different prints. Place this order, then start a new one." });
+      return Promise.resolve(false);
+    }
+    if (lowRes && !lowResCheck.checked){
+      vantaDialog({ title: "Lower print quality", message: "Please confirm you're okay with the lower print quality, or upload a higher-resolution image." });
+      return Promise.resolve(false);
+    }
+    addBtn.disabled = true;
+    addBtn.textContent = "Preparing print files…";
+    return generatePrintFiles().then(function(result){
+      cart.push({
+        layoutKey: layoutKey, arrangement: arrangement, orientation: orientation, panels: layout.cols * layout.rows, qty: 1,
+        dpi: result.dpi, lowResConfirmed: lowRes && lowResCheck.checked, original: originalFile, files: result.files, thumb: result.thumb
+      });
+      clearEditor();
+      return true;
+    }, function(err){ renderCart(); throw err; });
+  }
+  addBtn.addEventListener("click", function(){
+    addCurrentToCart().then(function(added){
+      if (added) uploadZone.scrollIntoView({ behavior: "smooth", block: "center" });
+    }).catch(function(){
+      vantaDialog({ title: "Couldn't add this print", message: "Something went wrong preparing your print files. Please try again." });
+    });
+  });
 
   /* ---------- generate the actual print-ready files ----------
      Renders the full composite at the same DPI the resolution badge already
@@ -328,6 +459,14 @@
         imageLeft * k, imageTop * k,
         natural.w * s * k, natural.h * s * k);
 
+      // Small preview of exactly what will print, for the cart.
+      var tScale = 160 / Math.max(outW, outH);
+      var thumbCanvas = document.createElement("canvas");
+      thumbCanvas.width = Math.max(1, Math.round(outW * tScale));
+      thumbCanvas.height = Math.max(1, Math.round(outH * tScale));
+      thumbCanvas.getContext("2d").drawImage(bigCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+      var thumb = thumbCanvas.toDataURL("image/jpeg", 0.8);
+
       var cols = layout.cols, rows = layout.rows;
       var panelPxW = Math.round(outW / cols);
       var panelPxH = Math.round(outH / rows);
@@ -356,7 +495,7 @@
               pending--;
               if (pending === 0){
                 files.sort(function(a, b){ return (a.row - b.row) || (a.col - b.col); });
-                resolve({ files: files, dpi: Math.round(outputDpi) });
+                resolve({ files: files, dpi: Math.round(outputDpi), thumb: thumb });
               }
             }, "image/jpeg", 0.95);
           })(row, col);
@@ -365,35 +504,47 @@
     });
   }
 
-  function renderDownloadLinks(result){
+  function renderDownloadLinks(items){
     printFilesEl.innerHTML = "";
-    result.files.forEach(function(f){
-      var a = document.createElement("a");
-      a.href = f.url;
-      a.download = f.name;
-      a.className = "print-file-link";
-      a.innerHTML =
-        '<span class="pf-label">' + (f.label || "Print") + '</span>' +
-        '<span class="pf-meta">' + f.w + ' × ' + f.h + 'px · ~' + result.dpi + ' DPI</span>' +
-        '<span class="pf-dl">Download<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4v12M6 12l6 6 6-6"/><path d="M4 20h16"/></svg></span>';
-      printFilesEl.appendChild(a);
+    printFilesEl.style.display = "block";
+    items.forEach(function(it, i){
+      var group = el("div", "print-group");
+      group.appendChild(el("h4", null, (items.length > 1 ? "Print " + (i + 1) + " · " : "") + describe(it) + (it.qty > 1 ? " × " + it.qty : "")));
+      var grid = el("div", "print-files");
+      it.files.forEach(function(f){
+        var a = document.createElement("a");
+        a.href = f.url;
+        a.download = items.length > 1 ? f.name.replace(/^vanta-/, "vanta-print" + (i + 1) + "-") : f.name;
+        a.className = "print-file-link";
+        a.innerHTML =
+          '<span class="pf-label">' + (f.label || "Print") + '</span>' +
+          '<span class="pf-meta">' + f.w + ' × ' + f.h + 'px · ~' + it.dpi + ' DPI</span>' +
+          '<span class="pf-dl">Download<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4v12M6 12l6 6 6-6"/><path d="M4 20h16"/></svg></span>';
+        grid.appendChild(a);
+      });
+      group.appendChild(grid);
+      printFilesEl.appendChild(group);
     });
   }
 
-  /* ---------- send the order to the server: the untouched original plus every panel file ---------- */
-  function sendOrder(result){
+  /* ---------- send the order to the server: for every print, the untouched original plus each panel file ---------- */
+  function sendOrder(items){
     var els = orderForm.elements;
     var f = new FormData();
     ["firstName", "lastName", "email", "phone", "address", "city", "postal"].forEach(function(n){ f.set(n, els[n].value); });
-    f.set("layout", layoutKey);
-    f.set("orientation", orientation);
-    if (layoutKey === "duo") f.set("arrangement", arrangement);
     f.set("rights", els.rights.checked ? "true" : "false");
-    f.set("lowResConfirmed", lowRes && lowResCheck.checked ? "true" : "false");
-    f.set("dpi", String(result.dpi));
-    f.set("panelsMeta", JSON.stringify(result.files.map(function(x, i){ return { index: i + 1, label: x.label }; })));
-    f.set("original", originalFile, originalFile.name);
-    result.files.forEach(function(x){ f.append("panels", x.blob, x.name); });
+    f.set("items", JSON.stringify(items.map(function(it){
+      return {
+        layout: it.layoutKey, orientation: it.orientation, arrangement: it.layoutKey === "duo" ? it.arrangement : null,
+        qty: it.qty, dpi: it.dpi, lowResConfirmed: it.lowResConfirmed,
+        panels: it.files.map(function(x, i){ return { index: i + 1, label: x.label }; })
+      };
+    })));
+    items.forEach(function(it, i){
+      var no = i + 1;
+      f.set("original-" + no, it.original, it.original.name);
+      it.files.forEach(function(x){ f.append("panel-" + no, x.blob, x.name); });
+    });
     return fetch("/api/orders", { method: "POST", body: f }).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(data){
         if (!res.ok) throw new Error(data.error || "We couldn't save your order. Please try again.");
@@ -405,29 +556,33 @@
   /* ---------- submit: payment gateway not yet connected, the order is captured and sent to our queue ---------- */
   orderForm.addEventListener("submit", function(e){
     e.preventDefault();
-    if (!imageOk){
-      alert("Please upload an image first.");
+    if (!cart.length && !imageOk){
+      vantaDialog({ title:"No image yet", message:"Please upload an image first." });
       return;
     }
-    if (lowRes && !lowResCheck.checked){
-      alert("Please confirm you're okay with the lower print quality, or upload a higher-resolution image.");
+    if (imageOk && lowRes && !lowResCheck.checked){
+      vantaDialog({ title:"Lower print quality", message:"Please confirm you're okay with the lower print quality, or upload a higher-resolution image." });
       return;
     }
     submitBtn.disabled = true;
     var originalLabel = submitBtn.textContent;
     submitBtn.textContent = "Preparing your print files…";
 
-    generatePrintFiles().then(function(result){
+    // The print still on screen is part of the order: add it first.
+    (imageOk ? addCurrentToCart() : Promise.resolve(true)).then(function(ok){
+      if (!ok) return null;
       submitBtn.textContent = "Sending your order…";
-      return sendOrder(result).then(function(order){ return { result: result, order: order }; });
-    }).then(function(done){
-      renderDownloadLinks(done.result);
-      orderRefEl.textContent = "Order reference: " + done.order.orderNumber;
-      orderForm.hidden = true;
-      orderSuccess.classList.add("show");
-      orderSuccess.scrollIntoView({ behavior: "smooth", block: "start" });
+      return sendOrder(cart).then(function(order){
+        renderDownloadLinks(cart);
+        orderRefEl.textContent = "Order reference: " + order.orderNumber;
+        orderForm.hidden = true;
+        orderSuccess.classList.add("show");
+        orderSuccess.scrollIntoView({ behavior: "smooth", block: "start" });
+        cart = [];   // the success screen keeps its own links; the next upload starts a fresh order
+        renderCart();
+      });
     }).catch(function(err){
-      alert(err && err.message ? err.message : "We couldn't save your order. Please try again.");
+      vantaDialog({ title:"Order not sent", message: err && err.message ? err.message : "We couldn't save your order. Please try again." });
     }).then(function(){
       submitBtn.disabled = false;
       submitBtn.textContent = originalLabel;

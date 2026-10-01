@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { db, tx, now, getSetting, setSetting } = require("../db");
 const { UPLOAD_DIR } = require("../config");
-const { STATUS_KEYS, STATUS_LABEL, PIPELINE, LAYOUT_PANELS, LAYOUT_LABEL, PAYMENT_LABEL } = require("./constants");
+const { STATUS_KEYS, STATUS_LABEL, PIPELINE, LAYOUT_PANELS, LAYOUT_LABEL, PRICED_LAYOUTS, PAYMENT_LABEL } = require("./constants");
 const { rand, clampStr, slug, safeFilename, saDate, isDateStr, HttpError } = require("./util");
 
 /* ---------------- images ---------------- */
@@ -31,20 +31,19 @@ function imageInfo(buf) {
 
 /* ---------------- pricing & cost snapshot ---------------- */
 function getPricing() {
-  return {
-    pricePerPanelCents: parseInt(getSetting("price_per_panel_cents"), 10),
-    shippingCents: parseInt(getSetting("shipping_cents"), 10)
-  };
+  const perPanelCents = {};
+  for (const k of PRICED_LAYOUTS) perPanelCents[k] = parseInt(getSetting("price_" + k + "_cents"), 10);
+  return { perPanelCents, shippingCents: parseInt(getSetting("shipping_cents"), 10) };
 }
 
 // Freezes the unit costs that apply right now. Later price changes never touch stored orders.
 function buildCostSnapshot(panels) {
-  const items = db.prepare("SELECT * FROM cost_items WHERE active = 1 ORDER BY sort, id").all();
+  const items = db.prepare("SELECT * FROM cost_items ORDER BY sort, id").all();
   const lines = items.map((i) => {
-    const quantity = i.basis === "per_panel" ? panels : 1;
+    const quantity = i.qty * (i.basis === "per_panel" ? panels : 1);
     return {
       key: i.key, label: i.label, basis: i.basis, unitCents: i.amount_cents,
-      quantity, totalCents: i.amount_cents * quantity, confirmed: !!i.confirmed
+      quantity, totalCents: Math.round(i.amount_cents * quantity)
     };
   });
   return { takenAt: now(), panels, lines, totalCents: lines.reduce((s, l) => s + l.totalCents, 0) };
@@ -57,29 +56,49 @@ function addEvent(orderId, type, from, to, detail) {
 }
 
 /* ---------------- create (public checkout) ---------------- */
-function createOrder(f, files) {
-  const layout = String(f.layout || "");
-  const panels = LAYOUT_PANELS[layout];
-  if (!panels) throw new HttpError(400, "Unknown layout.");
-  if (!["portrait", "landscape"].includes(f.orientation)) throw new HttpError(400, "Unknown orientation.");
-  const arrangement = ["side", "stacked"].includes(f.arrangement) ? f.arrangement : null;
+const MAX_ITEMS = 10, MAX_QTY = 20;
 
+// f = customer details; items = [{ layout, orientation, arrangement, qty, dpi, lowResConfirmed, original, panels }]
+// Each item is one print (one image, one crop); qty is identical copies of it.
+function createOrder(f, items) {
   const first = clampStr(f.firstName, 80), last = clampStr(f.lastName, 80);
   const email = clampStr(f.email, 160).toLowerCase();
   if (!first || !last) throw new HttpError(400, "Please enter your first and last name.");
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, "Please enter a valid email address.");
   const phone = clampStr(f.phone, 40), address = clampStr(f.address, 200), city = clampStr(f.city, 80), postal = clampStr(f.postal, 20);
   if (!phone || !address || !city || !postal) throw new HttpError(400, "Please complete your delivery details.");
-  if (!f.rightsConfirmed) throw new HttpError(400, "Please confirm you have the right to print this image.");
+  if (!f.rightsConfirmed) throw new HttpError(400, "Please confirm you have the right to print these images.");
 
-  if (!files.original) throw new HttpError(400, "Your original image is missing.");
-  if (files.panels.length !== panels) throw new HttpError(400, "The number of print files doesn't match the layout.");
+  if (!Array.isArray(items) || !items.length) throw new HttpError(400, "Your order has no prints in it.");
+  if (items.length > MAX_ITEMS) throw new HttpError(400, "An order can hold up to " + MAX_ITEMS + " different prints.");
 
-  const { pricePerPanelCents, shippingCents } = getPricing();
-  const productCents = pricePerPanelCents * panels;
+  // Prices are always recalculated here from the Pricing page, never taken from the browser.
+  const { perPanelCents, shippingCents } = getPricing();
+  const lines = items.map((it, i) => {
+    const layout = String(it.layout || "");
+    const panels = LAYOUT_PANELS[layout];
+    const label = "Print " + (i + 1);
+    if (!panels) throw new HttpError(400, label + ": unknown layout.");
+    if (!["portrait", "landscape"].includes(it.orientation)) throw new HttpError(400, label + ": unknown orientation.");
+    const qty = Number(it.qty);
+    if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) throw new HttpError(400, label + ": quantity must be between 1 and " + MAX_QTY + ".");
+    if (!it.original) throw new HttpError(400, label + ": the original image is missing.");
+    if (!Array.isArray(it.panels) || it.panels.length !== panels) throw new HttpError(400, label + ": the number of print files doesn't match the layout.");
+    const pricePerPanelCents = perPanelCents[layout];
+    if (!pricePerPanelCents) throw new HttpError(400, label + ": this layout isn't available.");
+    return {
+      ...it, panelFiles: it.panels, layout, panels, qty, pricePerPanelCents, lineCents: pricePerPanelCents * panels * qty,
+      arrangement: layout === "duo" && ["side", "stacked"].includes(it.arrangement) ? it.arrangement : null,
+      dpi: Number.isFinite(it.dpi) ? Math.max(0, Math.min(2000, Math.round(it.dpi))) : null
+    };
+  });
+
+  const totalPanels = lines.reduce((s, l) => s + l.panels * l.qty, 0);
+  const productCents = lines.reduce((s, l) => s + l.lineCents, 0);
   const totalCents = productCents + shippingCents;
-  const snapshot = buildCostSnapshot(panels);
-  const dpi = Number.isFinite(f.dpi) ? Math.max(0, Math.min(2000, Math.round(f.dpi))) : null;
+  const snapshot = buildCostSnapshot(totalPanels);
+  const dpis = lines.map((l) => l.dpi).filter((d) => d != null);
+  const one = lines.length === 1 ? lines[0] : null;
   const placedAt = now();
 
   return tx(() => {
@@ -87,6 +106,7 @@ function createOrder(f, files) {
     setSetting("next_order_number", n + 1);
     const orderNumber = "VNT-" + n;
 
+    // Order-level layout columns summarise the cart: "mixed" when it holds more than one print.
     const res = db.prepare(`INSERT INTO orders
       (order_number, created_at, first_name, last_name, email, phone, address, city, postal_code,
        layout, orientation, arrangement, panels, delivery_method,
@@ -94,35 +114,44 @@ function createOrder(f, files) {
        cost_snapshot, est_cost_cents, dpi_estimate, low_res_confirmed, rights_confirmed)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(orderNumber, placedAt, first, last, email, phone, address, city, postal,
-        layout, f.orientation, arrangement, panels, "Courier",
-        pricePerPanelCents, productCents, shippingCents, totalCents,
-        JSON.stringify(snapshot), snapshot.totalCents, dpi, f.lowResConfirmed ? 1 : 0, 1);
+        one ? one.layout : "mixed", one ? one.orientation : "mixed", one ? one.arrangement : null, totalPanels, "Courier",
+        one && one.qty === 1 ? one.pricePerPanelCents : 0, productCents, shippingCents, totalCents,
+        JSON.stringify(snapshot), snapshot.totalCents, dpis.length ? Math.min(...dpis) : null, lines.some((l) => l.lowResConfirmed) ? 1 : 0, 1);
     const id = Number(res.lastInsertRowid);
 
     const dir = path.join(UPLOAD_DIR, orderNumber);
     fs.mkdirSync(dir, { recursive: true });
     try {
-      const insertFile = db.prepare(`INSERT INTO order_files
-        (order_id, kind, panel_index, panel_label, stored_name, download_name, mime, size, width, height, created_at)
+      const insertItem = db.prepare(`INSERT INTO order_items
+        (order_id, item_no, layout, orientation, arrangement, panels, qty, price_per_panel_cents, line_cents, dpi_estimate, low_res_confirmed)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      const insertFile = db.prepare(`INSERT INTO order_files
+        (order_id, item_id, kind, panel_index, panel_label, stored_name, download_name, mime, size, width, height, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
 
-      const o = files.original;
-      const originalStored = "original." + o.info.ext;
-      fs.writeFileSync(path.join(dir, originalStored), o.buffer);
-      insertFile.run(id, "original", null, null, originalStored, orderNumber + "-original-" + safeFilename(o.name, "image." + o.info.ext),
-        o.info.mime, o.buffer.length, o.info.width, o.info.height, placedAt);
+      lines.forEach((l, i) => {
+        const no = i + 1, tag = "p" + no;
+        const itemId = Number(insertItem.run(id, no, l.layout, l.orientation, l.arrangement, l.panels, l.qty,
+          l.pricePerPanelCents, l.lineCents, l.dpi, l.lowResConfirmed ? 1 : 0).lastInsertRowid);
 
-      files.panels.forEach((p) => {
-        const stored = "panel-" + String(p.index).padStart(2, "0") + "." + p.info.ext;
-        fs.writeFileSync(path.join(dir, stored), p.buffer);
-        const dl = orderNumber + "-panel-" + p.index + "of" + panels + (p.label ? "-" + slug(p.label) : "") + "." + p.info.ext;
-        insertFile.run(id, "panel", p.index, p.label || null, stored, dl, p.info.mime, p.buffer.length, p.info.width, p.info.height, placedAt);
+        const o = l.original;
+        const originalStored = tag + "-original." + o.info.ext;
+        fs.writeFileSync(path.join(dir, originalStored), o.buffer);
+        insertFile.run(id, itemId, "original", null, null, originalStored, orderNumber + "-" + tag + "-original-" + safeFilename(o.name, "image." + o.info.ext),
+          o.info.mime, o.buffer.length, o.info.width, o.info.height, placedAt);
+
+        l.panelFiles.forEach((p) => {
+          const stored = tag + "-panel-" + String(p.index).padStart(2, "0") + "." + p.info.ext;
+          fs.writeFileSync(path.join(dir, stored), p.buffer);
+          const dl = orderNumber + "-" + tag + "-panel-" + p.index + "of" + l.panels + (p.label ? "-" + slug(p.label) : "") + (l.qty > 1 ? "-x" + l.qty : "") + "." + p.info.ext;
+          insertFile.run(id, itemId, "panel", p.index, p.label || null, stored, dl, p.info.mime, p.buffer.length, p.info.width, p.info.height, placedAt);
+        });
       });
     } catch (err) {
       fs.rmSync(dir, { recursive: true, force: true });
       throw err;
     }
-    addEvent(id, "placed", null, "new", "Order placed on the website");
+    addEvent(id, "placed", null, "new", "Order placed on the website" + (lines.length > 1 ? " (" + lines.length + " prints)" : ""));
     return { id, orderNumber };
   });
 }
@@ -148,8 +177,19 @@ function deliveryStatus(o) {
   return "Not yet dispatched";
 }
 
+function itemView(i) {
+  return {
+    id: i.id, no: i.item_no, layout: i.layout, layoutLabel: LAYOUT_LABEL[i.layout] || i.layout,
+    orientation: i.orientation, arrangement: i.arrangement, panels: i.panels, qty: i.qty,
+    pricePerPanel: rand(i.price_per_panel_cents), line: rand(i.line_cents),
+    dpiEstimate: i.dpi_estimate, lowResConfirmed: !!i.low_res_confirmed
+  };
+}
+const itemsFor = (orderId) => db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY item_no").all(orderId).map(itemView);
+
 function orderView(o) {
   const f = financials(o);
+  const items = itemsFor(o.id);
   return {
     id: o.id,
     orderNumber: o.order_number,
@@ -159,7 +199,7 @@ function orderView(o) {
       email: o.email, phone: o.phone, address: o.address, city: o.city, postalCode: o.postal_code
     },
     layout: o.layout, layoutLabel: LAYOUT_LABEL[o.layout] || o.layout,
-    orientation: o.orientation, arrangement: o.arrangement, panels: o.panels,
+    orientation: o.orientation, arrangement: o.arrangement, panels: o.panels, items,
     deliveryMethod: o.delivery_method, deliveryStatus: deliveryStatus(o),
     money: {
       pricePerPanel: rand(o.price_per_panel_cents), product: rand(o.product_cents), shipping: rand(o.shipping_cents),
@@ -209,7 +249,7 @@ function listOrders({ q, status, payment, archived } = {}) {
 
 function fileView(orderId, f) {
   return {
-    id: f.id, kind: f.kind, panelIndex: f.panel_index, label: f.panel_label,
+    id: f.id, itemId: f.item_id, kind: f.kind, panelIndex: f.panel_index, label: f.panel_label,
     downloadName: f.download_name, mime: f.mime, size: f.size, width: f.width, height: f.height,
     url: "/admin/api/orders/" + orderId + "/files/" + f.id
   };
@@ -227,7 +267,7 @@ function getOrderDetail(id) {
     order: orderView(o), files, events, otherOrders: others,
     costSnapshot: {
       takenAt: snapshot.takenAt, total: rand(snapshot.totalCents),
-      lines: snapshot.lines.map((l) => ({ label: l.label, basis: l.basis, unit: rand(l.unitCents), quantity: l.quantity, total: rand(l.totalCents), confirmed: l.confirmed }))
+      lines: snapshot.lines.map((l) => ({ label: l.label, basis: l.basis, unit: rand(l.unitCents), quantity: l.quantity, total: rand(l.totalCents) }))
     }
   };
 }
@@ -379,6 +419,7 @@ function setArchived(id, archived) {
 }
 
 module.exports = {
+  MAX_ITEMS, MAX_QTY,
   imageInfo, getPricing, buildCostSnapshot, createOrder, financials, orderView, listOrders,
   getOrderDetail, getOrderFile, customerOrders, changeStatus, markPaid, markUnpaid, recordRefund,
   updateShipping, setNotes, setArchived, getRow

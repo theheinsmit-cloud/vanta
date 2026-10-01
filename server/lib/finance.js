@@ -3,8 +3,8 @@ const path = require("path");
 const crypto = require("crypto");
 const { db, tx, now, getSettings, setSetting } = require("../db");
 const { RECEIPT_DIR } = require("../config");
-const { EXPENSE_CATEGORIES, EXPENSE_TYPES, STATUSES, STATUS_LABEL } = require("./constants");
-const { financials } = require("./orders");
+const { EXPENSE_CATEGORIES, EXPENSE_TYPES, STATUSES, STATUS_LABEL, PRICED_LAYOUTS, LAYOUT_LABEL, LAYOUT_PANELS } = require("./constants");
+const { financials, getPricing } = require("./orders");
 const { rand, toCents, clampStr, slug, saDate, isDateStr, safeFilename, HttpError } = require("./util");
 
 const allOrders = () => db.prepare("SELECT * FROM orders").all();
@@ -131,24 +131,31 @@ function getReceipt(id) {
 
 /* ---------------- unit costs ---------------- */
 function costItemView(i) {
-  return { id: i.id, key: i.key, label: i.label, basis: i.basis, amount: rand(i.amount_cents), confirmed: !!i.confirmed, active: !!i.active, note: i.note };
+  return { id: i.id, key: i.key, label: i.label, basis: i.basis, amount: rand(i.amount_cents), qty: i.qty, note: i.note };
+}
+// Blank means 1. Up to 2 decimals so part-quantities (e.g. 0.5 m of tape) work.
+function toQty(v) {
+  if (v === "" || v == null) return 1;
+  const q = Math.round(Number(v) * 100) / 100;
+  if (!Number.isFinite(q) || q <= 0 || q > 10000) throw new HttpError(400, "Quantity must be more than 0.");
+  return q;
 }
 function listCostItems() {
   const items = db.prepare("SELECT * FROM cost_items ORDER BY sort, id").all();
-  const example = (panels) => rand(items.filter((i) => i.active).reduce((s, i) => s + i.amount_cents * (i.basis === "per_panel" ? panels : 1), 0));
+  const example = (panels) => rand(items.reduce((s, i) => s + Math.round(i.amount_cents * i.qty * (i.basis === "per_panel" ? panels : 1)), 0));
   return { items: items.map(costItemView), examples: { 1: example(1), 2: example(2), 4: example(4) } };
 }
 function saveCostItems(list) {
   if (!Array.isArray(list)) throw new HttpError(400, "Invalid cost list.");
   return tx(() => {
-    const upd = db.prepare("UPDATE cost_items SET label=?, basis=?, amount_cents=?, confirmed=?, active=?, note=? WHERE id=?");
+    const upd = db.prepare("UPDATE cost_items SET label=?, basis=?, amount_cents=?, qty=?, note=? WHERE id=?");
     for (const i of list) {
       const cents = toCents(i.amount);
       if (cents == null || cents < 0) throw new HttpError(400, "Every cost must be zero or more.");
       if (!["per_panel", "per_order"].includes(i.basis)) throw new HttpError(400, "Invalid cost basis.");
       const label = clampStr(i.label, 80);
       if (!label) throw new HttpError(400, "Every cost needs a name.");
-      upd.run(label, i.basis, cents, i.confirmed ? 1 : 0, i.active ? 1 : 0, clampStr(i.note, 200), Number(i.id));
+      upd.run(label, i.basis, cents, toQty(i.qty), clampStr(i.note, 200), Number(i.id));
     }
     return listCostItems();
   });
@@ -162,8 +169,13 @@ function addCostItem(f) {
   let key = slug(label) || "cost", n = 1;
   while (db.prepare("SELECT 1 FROM cost_items WHERE key = ?").get(key)) key = slug(label) + "-" + ++n;
   const sort = (db.prepare("SELECT COALESCE(MAX(sort),0) AS m FROM cost_items").get().m || 0) + 10;
-  db.prepare("INSERT INTO cost_items (key,label,basis,amount_cents,confirmed,active,sort,note) VALUES (?,?,?,?,?,1,?,?)")
-    .run(key, label, f.basis, cents, f.confirmed ? 1 : 0, sort, "");
+  db.prepare("INSERT INTO cost_items (key,label,basis,amount_cents,qty,sort,note) VALUES (?,?,?,?,?,?,?)")
+    .run(key, label, f.basis, cents, toQty(f.qty), sort, "");
+  return listCostItems();
+}
+// Orders keep their own cost snapshot, so removing a line never changes past orders.
+function deleteCostItem(id) {
+  if (!db.prepare("DELETE FROM cost_items WHERE id = ?").run(Number(id)).changes) throw new HttpError(404, "Cost line not found.");
   return listCostItems();
 }
 
@@ -203,25 +215,39 @@ const TEXT_SETTINGS = { business_name: 80, business_legal_name: 120, business_ad
 
 function settingsView() {
   const s = getSettings();
-  const out = {
-    pricePerPanel: rand(parseInt(s.price_per_panel_cents, 10)),
-    shipping: rand(parseInt(s.shipping_cents, 10)),
-    deductStockOn: s.deduct_stock_on
-  };
+  const out = { deductStockOn: s.deduct_stock_on };
   for (const k of Object.keys(TEXT_SETTINGS)) out[k] = s[k] || "";
   return out;
 }
 function saveSettings(f) {
   return tx(() => {
-    const price = toCents(f.pricePerPanel), ship = toCents(f.shipping);
-    if (price == null || price <= 0) throw new HttpError(400, "Price per panel must be above zero.");
-    if (ship == null || ship < 0) throw new HttpError(400, "Shipping must be zero or more.");
     if (!["in_production", "completed", "off"].includes(f.deductStockOn)) throw new HttpError(400, "Invalid stock deduction setting.");
-    setSetting("price_per_panel_cents", price);
-    setSetting("shipping_cents", ship);
     setSetting("deduct_stock_on", f.deductStockOn);
     for (const [k, max] of Object.entries(TEXT_SETTINGS)) if (k in f) setSetting(k, clampStr(f[k], max));
     return settingsView();
+  });
+}
+
+/* ---------------- pricing (what customers pay) ---------------- */
+// Sliding scale: each layout has its own price per panel. Est. cost comes from the current unit costs.
+function pricingView() {
+  const p = getPricing();
+  const costs = listCostItems().examples;
+  return {
+    layouts: PRICED_LAYOUTS.map((k) => ({ key: k, label: LAYOUT_LABEL[k], panels: LAYOUT_PANELS[k], pricePerPanel: rand(p.perPanelCents[k]), estCost: costs[LAYOUT_PANELS[k]] }))
+  };
+}
+function savePricing(f) {
+  const prices = (f && f.prices) || {};
+  return tx(() => {
+    for (const k of PRICED_LAYOUTS) {
+      const c = toCents(prices[k]);
+      if (c == null || c <= 0) throw new HttpError(400, LAYOUT_LABEL[k] + " price per panel must be above zero.");
+      setSetting("price_" + k + "_cents", c);
+    }
+    // Delivery is always advertised as free: the courier cost is built into the panel prices.
+    setSetting("shipping_cents", 0);
+    return pricingView();
   });
 }
 
@@ -275,6 +301,6 @@ function dashboard() {
 
 module.exports = {
   incomeSummary, listExpenses, expenseTotals, createExpense, updateExpense, voidExpense, getReceipt,
-  listCostItems, saveCostItems, addCostItem, listInventory, adjustStock, updateInventoryItem,
+  listCostItems, saveCostItems, addCostItem, deleteCostItem, pricingView, savePricing, listInventory, adjustStock, updateInventoryItem,
   settingsView, saveSettings, dashboard, EXPENSE_CATEGORIES, EXPENSE_TYPES
 };

@@ -25,9 +25,16 @@
   function pill(cls, label) { return '<span class="pill ' + cls + '">' + esc(label) + "</span>"; }
   function statusPill(o) { return pill("s-" + o.status, o.statusLabel); }
   function payPill(o) { return pill("p-" + o.payment.status, o.payment.statusLabel); }
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+  // One print in the order, e.g. "Duo × 2 · portrait, stacked".
+  function itemLabel(i) {
+    return esc(i.layoutLabel) + (i.qty > 1 ? " × " + i.qty : "") + " · " + esc(i.orientation) + (i.layout === "duo" ? ", " + (i.arrangement === "stacked" ? "stacked" : "side by side") : "");
+  }
   function configLabel(o) {
-    var extra = o.layout === "duo" && o.arrangement === "stacked" ? ", stacked" : "";
-    return esc(o.layoutLabel) + " · " + o.panels + " panel" + (o.panels > 1 ? "s" : "") + '<div class="muted small">' + esc(o.orientation) + extra + "</div>";
+    if (o.items.length > 1) return plural(o.items.length, "print") + " · " + plural(o.panels, "panel") + '<div class="muted small">' + o.items.map(function (i) { return esc(i.layoutLabel) + (i.qty > 1 ? " ×" + i.qty : ""); }).join(", ") + "</div>";
+    var i = o.items[0] || o;
+    var extra = i.layout === "duo" && i.arrangement === "stacked" ? ", stacked" : "";
+    return esc(i.layoutLabel) + (i.qty > 1 ? " × " + i.qty : "") + " · " + plural(o.panels, "panel") + '<div class="muted small">' + esc(i.orientation) + extra + "</div>";
   }
   function monthRange(offset) {
     var t = today().split("-").map(Number);
@@ -69,7 +76,7 @@
     wrap.className = "modal-backdrop";
     wrap.innerHTML = '<form class="modal' + (o.wide ? " wide" : "") + '"><h3>' + esc(o.title) + "</h3>" + o.body +
       '<div class="modal-error hidden"></div><div class="modal-actions"><button type="button" class="btn ghost" data-close>Cancel</button>' +
-      '<button class="btn" type="submit">' + esc(o.submit || "Save") + "</button></div></form>";
+      '<button class="btn' + (o.danger ? " danger" : "") + '" type="submit">' + esc(o.submit || "Save") + "</button></div></form>";
     var form = $("form", wrap), errBox = $(".modal-error", wrap), prev = document.activeElement;
     function close() { document.removeEventListener("keydown", onKey); wrap.remove(); if (prev && prev.focus) prev.focus(); }
     function onKey(e) { if (e.key === "Escape") close(); }
@@ -87,9 +94,17 @@
       });
     });
     $("#modal-root").appendChild(wrap);
-    var first = $("input:not([type=hidden]),select,textarea", form);
+    var first = $("input:not([type=hidden]),select,textarea", form) || $("[data-close]", form);
     if (first) first.focus();
     return { close: close };
+  }
+  // On-brand replacement for window.confirm(). onConfirm may return a promise; a rejection shows inside the dialog.
+  function confirmModal(o) {
+    return openModal({
+      title: o.title, submit: o.submit || "Confirm", danger: o.danger,
+      body: '<p class="confirm-msg">' + esc(o.message) + "</p>",
+      onSubmit: function () { return o.onConfirm(); }
+    });
   }
   function fd(form) { var o = {}; form.forEach(function (v, k) { o[k] = v; }); return o; }
 
@@ -184,21 +199,30 @@
       return '<button type="button" class="' + cls + '" data-status="' + k + '">' + esc(label(k)) + "</button>";
     }).join("");
 
-    var original = d.files.filter(function (f) { return f.kind === "original"; })[0];
-    var panels = d.files.filter(function (f) { return f.kind === "panel"; });
-    var filesHtml = (original ? '<div class="file orig"><a href="' + original.url + '" target="_blank" rel="noopener"><img class="thumb" src="' + original.url + '" alt="Original upload" loading="lazy"></a><div class="body"><div class="t">Customer\'s original upload</div>' +
-      '<div class="m">' + esc(original.downloadName) + "<br>" + (original.width ? original.width + " × " + original.height + " px · " : "") + fmtSize(original.size) + '</div><div><a class="btn sm ghost" href="' + original.url + '?download=1">Download original</a></div></div></div>' : "") +
-      panels.map(function (f) {
-        return '<div class="file"><a href="' + f.url + '" target="_blank" rel="noopener"><img class="thumb" src="' + f.url + '" alt="Panel ' + f.panelIndex + '" loading="lazy"></a>' +
-          '<div class="t">Panel ' + f.panelIndex + " of " + o.panels + (f.label ? " · " + esc(f.label) : "") + '</div><div class="m">' + (f.width ? f.width + " × " + f.height + " px · " : "") + fmtSize(f.size) + '</div><a class="btn sm ghost" href="' + f.url + '?download=1">Download</a></div>';
-      }).join("");
+    // Artwork grouped per print: its original upload, then its panels in mounting order.
+    var multi = o.items.length > 1;
+    var filesHtml = o.items.map(function (it) {
+      var mine = d.files.filter(function (f) { return f.itemId === it.id; });
+      var original = mine.filter(function (f) { return f.kind === "original"; })[0];
+      var panels = mine.filter(function (f) { return f.kind === "panel"; });
+      var head = '<div class="print-head"><strong>' + (multi ? "Print " + it.no + " · " : "") + itemLabel(it) + "</strong>" +
+        '<span class="muted small">' + plural(it.panels, "panel") + (it.qty > 1 ? " per copy · <strong>make " + it.qty + " copies</strong>" : "") + (it.dpiEstimate ? " · about " + it.dpiEstimate + " DPI" : "") + "</span>" +
+        (it.lowResConfirmed ? '<span class="pill s-cancelled">Low resolution accepted</span>' : "") + "</div>";
+      return head + '<div class="files">' + (original ? '<div class="file orig"><a href="' + original.url + '" target="_blank" rel="noopener"><img class="thumb" src="' + original.url + '" alt="Original upload" loading="lazy"></a><div class="body"><div class="t">Customer\'s original upload</div>' +
+        '<div class="m">' + esc(original.downloadName) + "<br>" + (original.width ? original.width + " × " + original.height + " px · " : "") + fmtSize(original.size) + '</div><div><a class="btn sm ghost" href="' + original.url + '?download=1">Download original</a></div></div></div>' : "") +
+        panels.map(function (f) {
+          return '<div class="file"><a href="' + f.url + '" target="_blank" rel="noopener"><img class="thumb" src="' + f.url + '" alt="Panel ' + f.panelIndex + '" loading="lazy"></a>' +
+            '<div class="t">Panel ' + f.panelIndex + " of " + it.panels + (f.label ? " · " + esc(f.label) : "") + '</div><div class="m">' + (f.width ? f.width + " × " + f.height + " px · " : "") + fmtSize(f.size) + '</div><a class="btn sm ghost" href="' + f.url + '?download=1">Download</a></div>';
+        }).join("") + "</div>";
+    }).join("");
+    var lowResItems = o.items.filter(function (i) { return i.lowResConfirmed; });
 
     var paidDetail = o.payment.paidAt ? '<div class="money-row"><span class="muted">Paid on</span><span>' + fmtDate(o.payment.paidAt) + (o.payment.method ? " · " + esc(o.payment.method) : "") + "</span></div>" +
       (o.payment.reference ? '<div class="money-row"><span class="muted">Reference</span><span>' + esc(o.payment.reference) + "</span></div>" : "") : "";
     var canRefund = m.paid - m.refunded > 0;
     var costLines = d.costSnapshot.lines.map(function (l) {
-      return "<tr><td>" + esc(l.label) + (l.confirmed ? "" : ' <span class="muted small">(unconfirmed)</span>') + '</td><td class="muted small">' + (l.basis === "per_panel" ? "per panel" : "per order") + '</td><td class="r nowrap">' +
-        money(l.unit) + (l.quantity > 1 ? " × " + l.quantity : "") + '</td><td class="r nowrap">' + money(l.total) + "</td></tr>";
+      return "<tr><td>" + esc(l.label) + '</td><td class="muted small">' + (l.basis === "per_panel" ? "per panel" : "per order") + '</td><td class="r nowrap">' +
+        money(l.unit) + (l.quantity !== 1 ? " × " + l.quantity : "") + '</td><td class="r nowrap">' + money(l.total) + "</td></tr>";
     }).join("");
 
     var events = d.events.slice().reverse().map(function (e) {
@@ -228,21 +252,23 @@
       '<div class="actions">' + (next ? '<button class="btn" type="button" id="btn-advance">Move to ' + esc(label(next)) + "</button>" : "") +
       (!inactive ? '<button class="btn danger" type="button" id="btn-cancel">Cancel order</button>' : '<button class="btn ghost" type="button" data-status="new">Reopen as New</button>') + "</div>" +
       (inactive ? '<p class="hint">This order is ' + esc(o.statusLabel.toLowerCase()) + ". It stays on record so your totals remain explainable.</p>" : "") +
-      (o.artwork.lowResConfirmed ? '<div class="notice warn" style="margin-top:14px">The customer accepted a lower-resolution print (about ' + (o.artwork.dpiEstimate || "?") + " DPI). Check the artwork before production.</div>" : "") + "</section>" +
+      (lowResItems.length ? '<div class="notice warn" style="margin-top:14px">The customer accepted a lower-resolution print' + (multi ? " for " + lowResItems.map(function (i) { return "print " + i.no + " (about " + (i.dpiEstimate || "?") + " DPI)"; }).join(", ") : " (about " + (lowResItems[0].dpiEstimate || "?") + " DPI)") + ". Check the artwork before production.</div>" : "") + "</section>" +
 
       // artwork
       '<section class="card"><div class="card-head"><h2>Artwork</h2>' + (d.files.length ? '<a class="btn sm ghost" href="/admin/api/orders/' + o.id + '/download-all">Download all (.zip)</a>' : "") + "</div>" +
-      '<p class="hint" style="margin:-6px 0 14px">Panels are numbered in mounting order: left to right, top to bottom. Print files are cropped from the customer\'s original upload, which is kept untouched.</p>' +
-      '<div class="files">' + (filesHtml || '<div class="empty">No files stored for this order.</div>') + "</div>" +
-      '<p class="hint">Resolution estimate: ' + (o.artwork.dpiEstimate ? "about " + o.artwork.dpiEstimate + " DPI" : "unknown") + " · Rights confirmed by customer: " + (o.artwork.rightsConfirmed ? "yes" : "no") + "</p></section>" +
+      '<p class="hint" style="margin:-6px 0 14px">' + (multi ? "This order has " + plural(o.items.length, "separate print") + ". " : "") + 'Panels are numbered in mounting order: left to right, top to bottom. Print files are cropped from the customer\'s original upload, which is kept untouched.</p>' +
+      (d.files.length ? '<div class="prints">' + filesHtml + "</div>" : '<div class="empty">No files stored for this order.</div>') +
+      '<p class="hint">Rights confirmed by customer: ' + (o.artwork.rightsConfirmed ? "yes" : "no") + "</p></section>" +
 
       // financials
       '<section class="card"><div class="card-head"><h2>Financials</h2><div class="actions">' +
       (o.payment.status === "pending" ? '<button class="btn sm" type="button" id="btn-pay">Record payment</button>' : "") +
       (o.payment.status === "paid" && m.refunded === 0 ? '<button class="btn sm ghost" type="button" id="btn-unpay">Mark as unpaid</button>' : "") +
       (canRefund ? '<button class="btn sm danger" type="button" id="btn-refund">Record refund</button>' : "") + "</div></div>" +
-      '<div class="money-row"><span>Selling price (' + o.panels + " × " + money(m.pricePerPanel) + ')</span><span>' + money(m.product) + "</span></div>" +
-      '<div class="money-row"><span>Shipping charged</span><span>' + money(m.shipping) + "</span></div>" +
+      o.items.map(function (i) {
+        return '<div class="money-row"><span>' + (multi ? "Print " + i.no + ": " : "") + esc(i.layoutLabel) + " (" + (i.qty > 1 ? i.qty + " copies, " : "") + plural(i.panels, "panel") + " × " + money(i.pricePerPanel) + ")</span><span>" + money(i.line) + "</span></div>";
+      }).join("") +
+      '<div class="money-row"><span>Delivery charged</span><span>' + (m.shipping ? money(m.shipping) : "Free") + "</span></div>" +
       '<div class="money-row total"><span>Order total</span><span>' + money(m.total) + "</span></div>" +
       '<div class="money-row"><span class="muted">Payment status</span><span>' + payPill(o) + "</span></div>" +
       '<div class="money-row"><span class="muted">Amount paid</span><span>' + money(m.paid) + "</span></div>" + paidDetail +
@@ -264,8 +290,9 @@
       "<dt>Address</dt><dd>" + esc(c.address) + "<br>" + esc(c.city) + " " + esc(c.postalCode) + "</dd></dl></section>" +
 
       // order info
-      '<section class="card"><h2>Order</h2><dl class="kv"><dt>Configuration</dt><dd>' + esc(o.layoutLabel) + " · " + o.panels + " panel" + (o.panels > 1 ? "s" : "") + "</dd>" +
-      "<dt>Orientation</dt><dd>" + esc(o.orientation) + (o.layout === "duo" ? ", " + (o.arrangement === "stacked" ? "stacked" : "side by side") : "") + "</dd>" +
+      '<section class="card"><h2>Order</h2><dl class="kv"><dt>' + (multi ? "Prints" : "Configuration") + "</dt><dd>" +
+      o.items.map(function (i) { return (multi ? i.no + ". " : "") + itemLabel(i); }).join("<br>") + "</dd>" +
+      "<dt>Total panels</dt><dd>" + o.panels + "</dd>" +
       "<dt>Delivery</dt><dd>" + esc(o.deliveryMethod) + " · " + esc(o.deliveryStatus) + "</dd>" + keyDates +
       "<dt>Stock</dt><dd>" + (o.stockDeducted ? "Deducted" : "Not yet deducted") + "</dd></dl></section>" +
 
@@ -328,8 +355,12 @@
     if (cancel) cancel.addEventListener("click", cancelModal);
 
     $("#btn-archive").addEventListener("click", function () {
-      if (!confirm(o.archived ? "Restore this order to the main list?" : "Archive this order? It stays in your totals but is hidden from the default list.")) return;
-      run(api("/orders/" + id + "/archive", { json: { archived: !o.archived } }), o.archived ? "Order restored" : "Order archived");
+      confirmModal({
+        title: o.archived ? "Restore order" : "Archive order",
+        message: o.archived ? "Restore this order to the main list?" : "Archive this order? It stays in your totals but is hidden from the default list.",
+        submit: o.archived ? "Restore" : "Archive",
+        onConfirm: function () { return run(api("/orders/" + id + "/archive", { json: { archived: !o.archived } }), o.archived ? "Order restored" : "Order archived"); }
+      });
     });
 
     var pay = $("#btn-pay");
@@ -346,7 +377,11 @@
     });
     var unpay = $("#btn-unpay");
     if (unpay) unpay.addEventListener("click", function () {
-      if (confirm("Mark this order as not paid? Use this only to correct a mistake.")) run(api("/orders/" + id + "/payment", { json: { action: "unpaid" } }), "Payment reverted");
+      confirmModal({
+        title: "Mark as not paid", danger: true, submit: "Mark not paid",
+        message: "Mark this order as not paid? Use this only to correct a mistake.",
+        onConfirm: function () { return run(api("/orders/" + id + "/payment", { json: { action: "unpaid" } }), "Payment reverted"); }
+      });
     });
     var ref = $("#btn-refund");
     if (ref) ref.addEventListener("click", function () {
@@ -511,27 +546,57 @@
       if (token !== renderToken) return;
       var rows = d.items.map(function (i) {
         return '<tr data-id="' + i.id + '"><td><input class="c-label" value="' + esc(i.label) + '" maxlength="80" aria-label="Cost name"><input class="c-note" value="' + esc(i.note) + '" maxlength="200" placeholder="Note" aria-label="Note" style="margin-top:6px;font-size:13px"></td>' +
-          '<td style="width:150px"><input class="c-amount" type="number" step="0.01" min="0" value="' + i.amount.toFixed(2) + '" aria-label="Amount in rand"></td>' +
+          '<td style="width:130px"><input class="c-amount" type="number" step="0.01" min="0" value="' + i.amount.toFixed(2) + '" aria-label="Price each in rand"></td>' +
+          '<td style="width:90px"><input class="c-qty" type="number" step="any" min="0.01" value="' + i.qty + '" aria-label="Quantity"></td>' +
+          '<td class="r nowrap c-line">' + money(i.amount * i.qty) + "</td>" +
           '<td style="width:140px"><select class="c-basis" aria-label="Charged per"><option value="per_panel"' + (i.basis === "per_panel" ? " selected" : "") + '>per panel</option><option value="per_order"' + (i.basis === "per_order" ? " selected" : "") + ">per order</option></select></td>" +
-          '<td class="nowrap"><label class="check"><input class="c-confirmed" type="checkbox"' + (i.confirmed ? " checked" : "") + '> Confirmed</label></td>' +
-          '<td class="nowrap"><label class="check"><input class="c-active" type="checkbox"' + (i.active ? " checked" : "") + '> In use</label></td></tr>';
+          '<td class="nowrap"><button class="btn danger sm c-remove" type="button" aria-label="Remove ' + esc(i.label) + '">Remove</button></td></tr>';
       }).join("");
       body.innerHTML = '<div class="notice" style="margin-bottom:18px">These figures drive the estimated cost of <strong>new</strong> orders. Each order saves a snapshot of the costs that applied when it was placed, so changing a price here never alters past orders. Packaging and courier are charged <strong>once per order</strong>, not per panel.</div>' +
-        '<form id="cost-form"><div class="tablewrap"><table class="tbl" style="min-width:760px"><thead><tr><th>Cost</th><th>Amount (R)</th><th>Charged</th><th>Status</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
+        '<form id="cost-form"><div class="tablewrap"><table class="tbl" style="min-width:760px"><thead><tr><th>Cost</th><th>Price each (R)</th><th>Qty</th><th class="r">Line total</th><th>Charged</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
         '<div class="actions" style="margin-top:16px"><button class="btn" type="submit">Save unit costs</button><button class="btn ghost" type="button" id="cost-add">Add a cost line</button></div></form>' +
-        '<div class="section"><h2>Estimated cost per order (active lines)</h2><div class="grid g-3"><div class="stat"><div class="l">Single (1 panel)</div><div class="n">' + money(d.examples[1]) + '</div></div><div class="stat"><div class="l">Duo (2 panels)</div><div class="n">' + money(d.examples[2]) + '</div></div><div class="stat"><div class="l">Quad (4 panels)</div><div class="n">' + money(d.examples[4]) + "</div></div></div>" +
-        '<p class="hint">Lines marked unconfirmed are placeholders at R0.00 until you enter real supplier figures.</p></div>';
+        '<div class="section"><h2>Estimated cost per order</h2><div class="grid g-3"><div class="stat"><div class="l">Single (1 panel)</div><div class="n" id="cost-ex-1">' + money(d.examples[1]) + '</div></div><div class="stat"><div class="l">Duo (2 panels)</div><div class="n" id="cost-ex-2">' + money(d.examples[2]) + '</div></div><div class="stat"><div class="l">Quad (4 panels)</div><div class="n" id="cost-ex-4">' + money(d.examples[4]) + "</div></div></div>" +
+        '<p class="hint">Every line in the list counts towards each new order. Remove a line if it no longer applies.</p></div>';
       $("#cost-form").addEventListener("submit", function (e) {
         e.preventDefault();
         var items = $$("tr[data-id]", body).map(function (tr) {
-          return { id: tr.getAttribute("data-id"), label: $(".c-label", tr).value, note: $(".c-note", tr).value, amount: $(".c-amount", tr).value, basis: $(".c-basis", tr).value, confirmed: $(".c-confirmed", tr).checked, active: $(".c-active", tr).checked };
+          return { id: tr.getAttribute("data-id"), label: $(".c-label", tr).value, note: $(".c-note", tr).value, amount: $(".c-amount", tr).value, qty: $(".c-qty", tr).value, basis: $(".c-basis", tr).value };
         });
         api("/finance/costs", { json: { items: items } }).then(function () { toast("Unit costs saved"); return financeCosts(token, body); }).catch(fail);
+      });
+      // Live preview while typing: line totals and the per-order estimates (saved values are recalculated on the server).
+      function recalc() {
+        var ex = { 1: 0, 2: 0, 4: 0 };
+        $$("tr[data-id]", body).forEach(function (tr) {
+          var line = (parseFloat($(".c-amount", tr).value) || 0) * ($(".c-qty", tr).value === "" ? 1 : parseFloat($(".c-qty", tr).value) || 0);
+          $(".c-line", tr).textContent = money(line);
+          [1, 2, 4].forEach(function (n) { ex[n] += line * ($(".c-basis", tr).value === "per_panel" ? n : 1); });
+        });
+        [1, 2, 4].forEach(function (n) { $("#cost-ex-" + n).textContent = money(ex[n]); });
+      }
+      $("tbody", body).addEventListener("input", recalc);
+      $("tbody", body).addEventListener("change", recalc);
+      // Deletes on the server, then drops only that row so unsaved edits in other rows survive.
+      $("tbody", body).addEventListener("click", function (e) {
+        var btn = e.target.closest(".c-remove");
+        if (!btn) return;
+        var tr = btn.closest("tr[data-id]");
+        confirmModal({
+          title: "Remove cost line", danger: true, submit: "Remove",
+          message: 'Remove "' + ($(".c-label", tr).value || "this cost line") + '"? Past orders keep the costs they were placed with.',
+          onConfirm: function () {
+            return api("/finance/costs/" + tr.getAttribute("data-id") + "/delete", { json: {} }).then(function (r) {
+              tr.remove();
+              recalc();
+              toast("Cost line removed");
+            });
+          }
+        });
       });
       $("#cost-add").addEventListener("click", function () {
         openModal({
           title: "Add a cost line", submit: "Add",
-          body: '<div class="field"><label class="lbl">Name</label><input name="label" required maxlength="80"></div><div class="row"><div class="field"><label class="lbl">Amount (R)</label><input name="amount" type="number" step="0.01" min="0" value="0.00"></div><div class="field"><label class="lbl">Charged</label><select name="basis"><option value="per_panel">per panel</option><option value="per_order">per order</option></select></div></div>',
+          body: '<div class="field"><label class="lbl">Name</label><input name="label" required maxlength="80"></div><div class="row"><div class="field"><label class="lbl">Price each (R)</label><input name="amount" type="number" step="0.01" min="0" value="0.00"></div><div class="field"><label class="lbl">Qty</label><input name="qty" type="number" step="any" min="0.01" value="1"></div><div class="field"><label class="lbl">Charged</label><select name="basis"><option value="per_panel">per panel</option><option value="per_order">per order</option></select></div></div>',
           onSubmit: function (f) { return api("/finance/costs/add", { json: fd(f) }).then(function () { toast("Cost line added"); financeCosts(token, body); }); }
         });
       });
@@ -577,6 +642,46 @@
     });
   }
 
+  /* ---------- pricing ---------- */
+  function pagePricing(token) {
+    return api("/pricing").then(function (d) {
+      if (token !== renderToken) return;
+      var rows = d.layouts.map(function (l) {
+        return '<tr data-key="' + l.key + '" data-panels="' + l.panels + '" data-cost="' + l.estCost + '"><td><strong>' + esc(l.label) + '</strong><div class="muted small">' + l.panels + " panel" + (l.panels > 1 ? "s" : "") + "</div></td>" +
+          '<td style="width:160px"><input class="p-price" type="number" step="0.01" min="0.01" required value="' + l.pricePerPanel.toFixed(2) + '" aria-label="' + esc(l.label) + ' price per panel in rand"></td>' +
+          '<td class="r nowrap p-total"></td><td class="r nowrap p-vs"></td><td class="r nowrap muted">' + money(l.estCost) + '</td><td class="r nowrap p-profit"></td></tr>';
+      }).join("");
+      view.innerHTML = '<div class="page-head"><div><div class="eyebrow">Pricing</div><h1 class="page">Pricing</h1></div></div>' +
+        '<form id="pricing-form" class="stack">' +
+        '<section class="card"><h2>Price per panel, by layout</h2>' +
+        '<p class="hint" style="margin-bottom:14px">Set what a customer pays <strong>per panel</strong> for each layout, so bigger layouts can cost less per panel. The Create page shows these prices, and the server recalculates every order from them. Changes only affect new orders.</p>' +
+        '<div class="tablewrap"><table class="tbl" style="min-width:760px"><thead><tr><th>Layout</th><th>Price per panel (R)</th><th class="r">Customer pays</th><th class="r">Per panel vs Single</th><th class="r">Est. cost</th><th class="r">Est. profit</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
+        '<p class="hint">Est. cost comes from <a href="#/finance/costs">Finance &rarr; Unit costs</a>. Est. profit is what the customer pays minus that cost.</p>' +
+        '<div class="notice" style="margin-top:14px">Delivery is always advertised as <strong>Free</strong>. Build it into the prices above; what you pay the courier is counted in Unit costs.</div></section>' +
+        '<div><button class="btn" type="submit">Save pricing</button></div></form>';
+      function recalc() {
+        var single = parseFloat($('tr[data-key="single"] .p-price').value) || 0;
+        $$("tr[data-key]").forEach(function (tr) {
+          var price = parseFloat($(".p-price", tr).value) || 0, panels = +tr.getAttribute("data-panels");
+          var total = price * panels, profit = total - parseFloat(tr.getAttribute("data-cost"));
+          $(".p-total", tr).textContent = money(total);
+          var vs = tr.getAttribute("data-key") === "single" || !single ? "—" : (price < single ? (Math.round((1 - price / single) * 1000) / 10) + "% less" : price > single ? (Math.round((price / single - 1) * 1000) / 10) + "% more" : "same");
+          $(".p-vs", tr).textContent = vs;
+          $(".p-profit", tr).textContent = money(profit);
+          $(".p-profit", tr).className = "r nowrap p-profit " + (profit < 0 ? "neg" : "pos");
+        });
+      }
+      $("#pricing-form").addEventListener("input", recalc);
+      recalc();
+      $("#pricing-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var prices = {};
+        $$("tr[data-key]").forEach(function (tr) { prices[tr.getAttribute("data-key")] = $(".p-price", tr).value; });
+        api("/pricing", { json: { prices: prices } }).then(function () { toast("Pricing saved"); }).catch(fail);
+      });
+    });
+  }
+
   /* ---------- settings ---------- */
   function pageSettings(token) {
     return api("/settings").then(function (s) {
@@ -586,9 +691,7 @@
       }
       view.innerHTML = '<div class="page-head"><div><div class="eyebrow">Settings</div><h1 class="page">Settings</h1></div></div>' +
         '<form id="settings-form" class="stack">' +
-        '<section class="card"><h2>Pricing (what customers pay)</h2><div class="row"><div class="field"><label class="lbl" for="s-price">Price per A4 panel (R)</label><input id="s-price" name="pricePerPanel" type="number" step="0.01" min="0.01" required value="' + s.pricePerPanel.toFixed(2) + '"></div>' +
-        '<div class="field"><label class="lbl" for="s-ship">Shipping charged per order (R)</label><input id="s-ship" name="shipping" type="number" step="0.01" min="0" required value="' + s.shipping.toFixed(2) + '"></div></div>' +
-        '<p class="hint">These prices are used by the public Create page and are recalculated on the server for every order. They only affect new orders.</p></section>' +
+        '<div class="notice">Customer prices are set under <a href="#/pricing">Pricing</a>.</div>' +
         '<section class="card"><h2>Production &amp; costs</h2><div class="field"><label class="lbl" for="s-deduct">Deduct stock when an order reaches</label><select id="s-deduct" name="deductStockOn"><option value="in_production"' + (s.deductStockOn === "in_production" ? " selected" : "") + '>In Production</option><option value="completed"' + (s.deductStockOn === "completed" ? " selected" : "") + '>Completed</option><option value="off"' + (s.deductStockOn === "off" ? " selected" : "") + '>Never (I\'ll adjust stock by hand)</option></select></div>' +
         '<p class="hint">Unit costs (aluminium, printing, magnets and so on) are edited under <a href="#/finance/costs">Finance &rarr; Unit costs</a>.</p>' +
         '<div class="notice" style="margin-top:14px">Order workflow: ' + meta.statuses.filter(function (x) { return PIPE.indexOf(x.key) >= 0; }).map(function (x) { return esc(x.label); }).join(" → ") + ". Cancelled and Refunded are available where needed.</div></section>" +
@@ -621,6 +724,7 @@
     else if (page === "orders") p = pageOrders(token, query);
     else if (page === "customer" && seg[1]) p = pageCustomer(token, decodeURIComponent(seg[1]));
     else if (page === "finance") p = pageFinance(token, seg[1]);
+    else if (page === "pricing") p = pagePricing(token);
     else if (page === "inventory") p = pageInventory(token);
     else if (page === "settings") p = pageSettings(token);
     else { location.hash = "#/"; return; }

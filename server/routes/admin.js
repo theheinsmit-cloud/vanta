@@ -108,9 +108,12 @@ api.get("/orders/:id/files/:fid", h((req, res) => {
 
 api.get("/orders/:id/download-all", h((req, res) => {
   const detail = orders.getOrderDetail(id(req));
+  // One folder per print, e.g. "print-2 (Duo x3)/print-files/...", so copies and crops never get mixed up.
+  const folder = {};
+  for (const it of detail.order.items) folder[it.id] = "print-" + it.no + " (" + it.layoutLabel + (it.qty > 1 ? " x" + it.qty : "") + ")/";
   const entries = detail.files.map((f) => {
     const file = orders.getOrderFile(detail.order.id, f.id);
-    return { name: (f.kind === "original" ? "original/" : "print-files/") + f.downloadName, data: fs.readFileSync(file.path) };
+    return { name: (folder[f.itemId] || "") + (f.kind === "original" ? "original/" : "print-files/") + f.downloadName, data: fs.readFileSync(file.path) };
   });
   if (!entries.length) throw new HttpError(404, "This order has no files.");
   res.setHeader("Content-Type", "application/zip");
@@ -148,11 +151,16 @@ api.get("/expenses/:id/receipt", h((req, res) => {
 api.get("/finance/costs", h((req, res) => res.json(fin.listCostItems())));
 api.post("/finance/costs", h((req, res) => res.json(fin.saveCostItems(req.body.items))));
 api.post("/finance/costs/add", h((req, res) => res.json(fin.addCostItem(req.body))));
+api.post("/finance/costs/:id/delete", h((req, res) => res.json(fin.deleteCostItem(id(req)))));
 
 /* inventory */
 api.get("/inventory", h((req, res) => res.json(fin.listInventory())));
 api.post("/inventory/:id/adjust", h((req, res) => res.json(fin.adjustStock(id(req), req.body.delta, req.body.reason))));
 api.post("/inventory/:id", h((req, res) => res.json(fin.updateInventoryItem(id(req), req.body))));
+
+/* pricing (sliding scale per layout + delivery charge) */
+api.get("/pricing", h((req, res) => res.json(fin.pricingView())));
+api.post("/pricing", h((req, res) => res.json(fin.savePricing(req.body))));
 
 /* settings (only whitelisted operational settings; never secrets) */
 api.get("/settings", h((req, res) => res.json(fin.settingsView())));

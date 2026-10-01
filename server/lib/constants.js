@@ -15,6 +15,8 @@ const PIPELINE = ["new", "artwork_check", "ready_for_production", "in_production
 
 const LAYOUT_PANELS = { single: 1, duo: 2, trio: 3, quad: 4 };
 const LAYOUT_LABEL = { single: "Single", duo: "Duo", trio: "Trio", quad: "Quad" };
+// Layouts the Create page sells. Each has its own price per panel (sliding scale), stored as settings price_<key>_cents.
+const PRICED_LAYOUTS = ["single", "duo", "quad"];
 
 const EXPENSE_CATEGORIES = [
   "Equipment", "Materials/Stock", "Printing", "Packaging", "Shipping/Courier",
@@ -25,4 +27,4 @@ const EXPENSE_TYPES = ["business", "production"];
 
 const PAYMENT_LABEL = { pending: "Pending", paid: "Paid", partially_refunded: "Partially refunded", refunded: "Refunded" };
 
-module.exports = { STATUSES, STATUS_KEYS, STATUS_LABEL, PIPELINE, LAYOUT_PANELS, LAYOUT_LABEL, EXPENSE_CATEGORIES, EXPENSE_TYPES, PAYMENT_LABEL };
+module.exports = { STATUSES, STATUS_KEYS, STATUS_LABEL, PIPELINE, LAYOUT_PANELS, LAYOUT_LABEL, PRICED_LAYOUTS, EXPENSE_CATEGORIES, EXPENSE_TYPES, PAYMENT_LABEL };
