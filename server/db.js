@@ -151,7 +151,7 @@ const DEFAULT_SETTINGS = {
   business_name: "VANTA",
   business_legal_name: "",
   business_address: "",
-  business_email: "hello@vanta.co.za",
+  business_email: "",
   business_phone: "",
   vat_number: "",
   bank_details: "",

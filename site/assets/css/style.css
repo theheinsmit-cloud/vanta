@@ -525,16 +525,6 @@ legend{font-family:var(--display);font-size:1.05rem;color:var(--text-primary);ma
 [data-promo-badge] s,.promo-bar s{opacity:.65}
 .promo-hero{margin-top:1.2rem;font-size:1rem;color:var(--text-primary)}
 .promo-inline{margin-top:1.2rem;font-size:1rem;color:var(--text-primary);padding:.8rem 1rem;border:1px solid var(--hairline-strong);background:rgba(201,162,74,.06);width:fit-content;max-width:100%}
-.promo-band{background:linear-gradient(135deg,rgba(201,162,74,.12),rgba(201,162,74,.02) 60%),var(--panel);border-top:1px solid var(--hairline-strong);border-bottom:1px solid var(--hairline-strong)}
-.promo-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:clamp(1.5rem,5vw,4rem);align-items:center}
-.promo-copy h2{font-size:clamp(2rem,4.5vw,3.2rem);margin:.6rem 0 1rem}
-.promo-copy p{max-width:52ch}
-.promo-copy .btn{margin-top:1.6rem}
-.promo-price{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3rem;aspect-ratio:210/297;max-width:260px;width:100%;justify-self:center;border:1px solid var(--hairline-strong);background:radial-gradient(circle at 30% 20%,rgba(227,192,116,.18),transparent 60%),#100e0a;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.promo-price .was{font-family:var(--display);font-size:1.6rem;color:var(--text-secondary);opacity:.7}
-.promo-price .now{font-family:var(--display);font-size:clamp(3rem,7vw,4.4rem);color:var(--accent);line-height:1}
-.promo-price .per{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-secondary)}
-@media (max-width:760px){.promo-grid{grid-template-columns:1fr}.promo-price{max-width:200px}}
 .promo-bar{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:150;display:flex;align-items:center;gap:.9rem;width:max-content;max-width:calc(100vw - 32px);padding:.7rem .7rem .7rem 1.1rem;background:rgba(23,20,15,.96);border:1px solid var(--hairline-strong);box-shadow:0 10px 40px rgba(0,0,0,.55);font-size:.9rem;color:var(--text-primary)}
 .promo-bar p{margin:0;line-height:1.4}
 .promo-bar-cta{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:#12100b;background:var(--accent);padding:.7em 1em;text-decoration:none;white-space:nowrap}
@@ -542,9 +532,30 @@ legend{font-family:var(--display);font-size:1.05rem;color:var(--text-primary);ma
 .promo-bar-close{background:none;border:0;color:var(--text-secondary);font-size:1.3rem;line-height:1;cursor:pointer;padding:.2rem .4rem;min-width:32px;min-height:32px}
 .promo-bar-close:hover{color:var(--text-primary)}
 @media (max-width:600px){.promo-bar{left:16px;right:16px;transform:none;width:auto;font-size:.82rem;gap:.6rem}.promo-bar-cta{display:none}}
-/* promo card with the launch artwork behind the price */
-.promo-price{position:relative;overflow:hidden;justify-content:flex-end;padding-bottom:1.6rem;aspect-ratio:688/1024;max-width:340px}
-.promo-price .promo-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.promo-price::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,transparent 45%,rgba(8,7,5,.92) 82%)}
-.promo-price > :not(.promo-art){position:relative;z-index:1}
-@media (max-width:760px){.promo-price{max-width:260px}}
+
+/* homepage launch-special band: full-bleed scene, copy over the dark left side */
+.promo-band{position:relative;overflow:hidden;display:flex;align-items:center;min-height:clamp(460px,42vw,660px);background:#0d0c09;border-top:1px solid var(--hairline-strong);border-bottom:1px solid var(--hairline-strong)}
+.promo-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:72% center}
+.promo-band::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(11,10,8,.94) 0%,rgba(11,10,8,.7) 34%,rgba(11,10,8,0) 58%)}
+.promo-inner{position:relative;z-index:2;width:100%;padding:clamp(2.5rem,5vw,4rem) clamp(1.25rem,6vw,6rem)}
+.promo-count{display:inline-flex;align-items:center;gap:.55rem;margin:0;font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.promo-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:promo-pulse 2s infinite}
+@keyframes promo-pulse{0%{box-shadow:0 0 0 0 rgba(201,162,74,.6)}70%{box-shadow:0 0 0 8px rgba(201,162,74,0)}100%{box-shadow:0 0 0 0 rgba(201,162,74,0)}}
+.promo-price-hero{display:flex;align-items:baseline;flex-wrap:wrap;gap:.2rem 1rem;margin:.9rem 0 .5rem}
+.promo-price-hero .now{font-family:var(--display);font-size:clamp(4rem,9vw,7rem);line-height:.9;color:var(--accent)}
+.promo-price-hero .side{display:flex;flex-direction:column;gap:.35rem}
+.promo-price-hero .was{font-family:var(--display);font-size:1.6rem;color:var(--text-secondary);text-decoration-thickness:1px;opacity:.75}
+.promo-price-hero .per{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--text-primary)}
+.promo-inner h2{font-size:clamp(1.6rem,3vw,2.3rem);margin:.4rem 0 0;max-width:20ch}
+.promo-perks{list-style:none;padding:0;margin:1.4rem 0 0;display:flex;flex-wrap:wrap;gap:.6rem 1.6rem}
+.promo-perks li{display:flex;align-items:center;gap:.55rem;font-size:.92rem;color:var(--text-primary)}
+.promo-perks li::before{content:"";width:15px;height:15px;flex:none;background:var(--accent);-webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6'><path d='M5 12l5 5 9-10'/></svg>") center/contain no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6'><path d='M5 12l5 5 9-10'/></svg>") center/contain no-repeat}
+.promo-inner .btn{margin-top:1.8rem}
+@media (max-width:760px){
+  .promo-band{align-items:flex-end;min-height:0}
+  .promo-bg{position:relative;inset:auto;height:auto;aspect-ratio:16/10;object-position:72% center}
+  .promo-band{flex-direction:column;align-items:stretch}
+  .promo-band::before{background:linear-gradient(180deg,rgba(11,10,8,0) 0%,rgba(11,10,8,0) 30%,#0d0c09 calc(100vw * .625))}
+  .promo-inner{margin-top:-1rem;padding-top:0}
+}
+@media (prefers-reduced-motion:reduce){.promo-dot{animation:none}}

@@ -16,7 +16,7 @@
   var orderForm = document.getElementById("order-form");
   var orderSuccess = document.getElementById("order-success");
   var submitBtn = document.getElementById("submit-order");
-  var printFilesEl = document.getElementById("print-files");
+  var orderSummaryEl = document.getElementById("order-summary-line");
   var orderRefEl = document.getElementById("order-ref");
   var originalFile = null;   // the customer's untouched upload, sent to the server as-is
   var configurator = document.querySelector(".configurator");
@@ -91,8 +91,7 @@
     if (!orderSuccess.classList.contains("show")) return;
     orderSuccess.classList.remove("show");
     orderForm.hidden = false;
-    printFilesEl.querySelectorAll("a").forEach(function(a){ URL.revokeObjectURL(a.href); });
-    printFilesEl.innerHTML = "";
+    orderSummaryEl.textContent = "";
     orderRefEl.textContent = "";
   }
   function applyLayout(){
@@ -535,29 +534,6 @@
     });
   }
 
-  function renderDownloadLinks(items){
-    printFilesEl.innerHTML = "";
-    printFilesEl.style.display = "block";
-    items.forEach(function(it, i){
-      var group = el("div", "print-group");
-      group.appendChild(el("h4", null, (items.length > 1 ? "Print " + (i + 1) + " · " : "") + describe(it) + (it.qty > 1 ? " × " + it.qty : "")));
-      var grid = el("div", "print-files");
-      it.files.forEach(function(f){
-        var a = document.createElement("a");
-        a.href = f.url;
-        a.download = items.length > 1 ? f.name.replace(/^vanta-/, "vanta-print" + (i + 1) + "-") : f.name;
-        a.className = "print-file-link";
-        a.innerHTML =
-          '<span class="pf-label">' + (f.label || "Print") + '</span>' +
-          '<span class="pf-meta">' + f.w + ' × ' + f.h + 'px · ~' + it.dpi + ' DPI</span>' +
-          '<span class="pf-dl">Download<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4v12M6 12l6 6 6-6"/><path d="M4 20h16"/></svg></span>';
-        grid.appendChild(a);
-      });
-      group.appendChild(grid);
-      printFilesEl.appendChild(group);
-    });
-  }
-
   /* ---------- send the order to the server: for every print, the untouched original plus each panel file ---------- */
   function sendOrder(items){
     var els = orderForm.elements;
@@ -610,7 +586,10 @@
       if (!ok) return null;
       submitBtn.textContent = "Sending your order…";
       return sendOrder(cart).then(function(order){
-        renderDownloadLinks(cart);
+        // The print files live with the order in the admin; the customer just gets a confirmation.
+        var panels = cart.reduce(function(n, it){ return n + it.panels * it.qty; }, 0);
+        orderSummaryEl.textContent = plural(cart.length, "print") + ", " + plural(panels, "panel") + ", " + rands(currentQuote(cart).totalCents) + ".";
+        cart.forEach(function(it){ it.files.forEach(function(f){ URL.revokeObjectURL(f.url); }); });
         orderRefEl.textContent = "Order reference: " + order.orderNumber;
         orderForm.hidden = true;
         orderSuccess.classList.add("show");

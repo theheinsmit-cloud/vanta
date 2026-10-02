@@ -107,24 +107,29 @@
 
       document.querySelectorAll("[data-promo-badge]").forEach(function(slot){ priceLine(slot); slot.hidden = false; added.push(slot); });
 
+      // Homepage band: full-width scene (a true-size Quad on the wall), copy and price laid over the dark side.
       document.querySelectorAll("[data-promo-section]").forEach(function(slot){
-        var tiers = (p.tiers || []).map(function(t){ return t.pct + "% off " + t.minPanels + "+ panels"; }).join(", ");
-        var wrap = make("div", "wrap promo-grid");
-        var copy = make("div", "promo-copy");
-        copy.appendChild(make("p", "eyebrow", promo.name));
-        var h = make("h2", null, now + " per panel."); h.id = "promo-head";
-        h.appendChild(document.createElement("br")); h.appendChild(document.createTextNode("Until " + until + "."));
-        copy.appendChild(h);
-        copy.appendChild(make("p", null, "Every A4 metal panel for " + now + " instead of " + was + ", with free nationwide delivery." + (tiers ? " Volume discounts still apply on top: " + tiers + "." : "")));
+        var daysLeft = Math.ceil((Date.parse(promo.endsAt) - Date.now()) / 864e5);
+        var maxPct = (p.tiers || []).reduce(function(m, t){ return Math.max(m, t.pct); }, 0);
+        var bg = make("img", "promo-bg"); bg.src = "assets/promo-launch-wide.jpg"; bg.loading = "lazy";
+        bg.alt = "A VANTA Quad, four A4 metal panels forming one leopard portrait, on a living-room wall above a sideboard";
+        var inner = make("div", "promo-inner");
+        var count = make("p", "promo-count"); count.appendChild(make("span", "promo-dot"));
+        count.appendChild(document.createTextNode(promo.name + " · " + (daysLeft > 1 ? "Ends in " + daysLeft + " days" : "Ends tonight")));
+        inner.appendChild(count);
+        var price = make("p", "promo-price-hero");
+        price.appendChild(make("span", "now", now));
+        var side = make("span", "side"); side.appendChild(make("s", "was", was)); side.appendChild(make("span", "per", "per A4 panel"));
+        price.appendChild(side); inner.appendChild(price);
+        var h = make("h2", null, "Every panel, any layout, until " + until + "."); h.id = "promo-head";
+        inner.appendChild(h);
+        var perks = make("ul", "promo-perks");
+        ["Free nationwide delivery", maxPct ? "Up to " + maxPct + "% off bigger orders" : null, "Mix any prints in one order"].forEach(function(t){ if (t) perks.appendChild(make("li", null, t)); });
+        inner.appendChild(perks);
         var cta = make("a", "btn btn-primary", "Create your VANTA"); cta.href = "create.html";
-        copy.appendChild(cta);
-        var price = make("div", "promo-price"); price.setAttribute("aria-hidden", "true");
-        var art = make("img", "promo-art"); art.src = "assets/promo-launch.jpg"; art.alt = ""; art.loading = "lazy";
-        price.appendChild(art);
-        price.appendChild(make("s", "was", was)); price.appendChild(make("span", "now", now)); price.appendChild(make("span", "per", "per A4 panel"));
-        wrap.appendChild(copy); wrap.appendChild(price);
-        slot.className = "band-y promo-band"; slot.setAttribute("aria-labelledby", "promo-head");
-        slot.appendChild(wrap); slot.hidden = false; added.push(slot);
+        inner.appendChild(cta);
+        slot.className = "promo-band"; slot.setAttribute("aria-labelledby", "promo-head");
+        slot.appendChild(bg); slot.appendChild(inner); slot.hidden = false; added.push(slot);
       });
 
       // Floating bar everywhere except the Create page, which shows the offer in its order summary.
