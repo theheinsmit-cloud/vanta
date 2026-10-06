@@ -4,13 +4,16 @@
   "private": true,
   "description": "VANTA public site + private admin portal",
   "main": "server/index.js",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "set-admin": "node scripts/set-admin.js"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "nodemailer": "^10.0.15"
   }
 }

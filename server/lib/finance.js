@@ -249,7 +249,10 @@ function settingsView() {
   const out = {
     deductStockOn: s.deduct_stock_on,
     ikhokhaAppId: s.ikhokha_app_id || "", ikhokhaSecretSet: !!s.ikhokha_app_secret,
-    ikhokhaFromEnv: !!(process.env.IKHOKHA_APP_ID && process.env.IKHOKHA_APP_SECRET)
+    ikhokhaFromEnv: !!(process.env.IKHOKHA_APP_ID && process.env.IKHOKHA_APP_SECRET),
+    // Order notification emails: the sending password is never sent back, only whether it is set.
+    notifyEmail: s.notify_email || "", smtpUser: s.smtp_user || "", smtpPassSet: !!s.smtp_pass,
+    smtpHost: s.smtp_host || "smtp.gmail.com", smtpPort: parseInt(s.smtp_port, 10) || 465
   };
   for (const k of Object.keys(TEXT_SETTINGS)) out[k] = s[k] || "";
   return out;
@@ -258,6 +261,11 @@ function saveSettings(f) {
   return tx(() => {
     if (!["in_production", "completed", "off"].includes(f.deductStockOn)) throw new HttpError(400, "Invalid stock deduction setting.");
     setSetting("deduct_stock_on", f.deductStockOn);
+    if ("notifyEmail" in f) setSetting("notify_email", clampStr(f.notifyEmail, 300));
+    if ("smtpUser" in f) setSetting("smtp_user", clampStr(f.smtpUser, 160));
+    if (f.smtpPass) setSetting("smtp_pass", clampStr(f.smtpPass, 200)); // blank = keep the saved password
+    if ("smtpHost" in f) setSetting("smtp_host", clampStr(f.smtpHost, 120) || "smtp.gmail.com");
+    if ("smtpPort" in f) { const port = parseInt(f.smtpPort, 10); setSetting("smtp_port", port > 0 && port < 65536 ? port : 465); }
     if (f.ikhokhaClear) { setSetting("ikhokha_app_id", ""); setSetting("ikhokha_app_secret", ""); }
     else {
       if ("ikhokhaAppId" in f) setSetting("ikhokha_app_id", clampStr(f.ikhokhaAppId, 100));

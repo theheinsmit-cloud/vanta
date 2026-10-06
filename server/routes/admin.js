@@ -9,6 +9,7 @@ const orders = require("../lib/orders");
 const fin = require("../lib/finance");
 const payments = require("../lib/payments");
 const ik = require("../lib/ikhokha");
+const mailer = require("../lib/mailer");
 const { renderInvoice } = require("../lib/invoice");
 const { buildZip } = require("../lib/zip");
 const { STATUSES, LAYOUT_LABEL } = require("../lib/constants");
@@ -112,6 +113,12 @@ api.post("/orders/:id/payment-check", h(async (req, res) => {
 api.post("/payments/test", h(async (req, res) => {
   const cents = Math.round(Number(req.body.amount) * 100);
   res.json(await payments.startTestPayment(cents, cfg.PUBLIC_URL || req.protocol + "://" + req.get("host")));
+}));
+// Sends a test notification email with the saved settings.
+api.post("/notifications/test", h(async (req, res) => {
+  if (!mailer.isConfigured()) throw new HttpError(400, "Save a notification email, Gmail address and app password first.");
+  try { await mailer.sendTest(); } catch (e) { throw new HttpError(400, "Sending failed: " + String(e.message).slice(0, 200)); }
+  res.json({ ok: true });
 }));
 api.get("/payments/test/:pid", h(async (req, res) => res.json(await ik.getStatus(req.params.pid))));
 

@@ -774,6 +774,21 @@
         '<section class="card"><h2>Business &amp; invoice details</h2><div class="row">' + txt("business_name", "Trading name", s.business_name) + txt("business_legal_name", "Registered name (optional)", s.business_legal_name) + "</div>" +
         txt("business_address", "Address", s.business_address, true) + '<div class="row">' + txt("business_email", "Email", s.business_email) + txt("business_phone", "Phone", s.business_phone) + txt("vat_number", "VAT number (optional)", s.vat_number) + "</div>" +
         txt("bank_details", "Bank details (shown on unpaid invoices)", s.bank_details, true) + txt("invoice_notes", "Invoice footer note", s.invoice_notes, true) + "</section>" +
+        // Order notification emails: who gets them, and the (Gmail) account that sends them.
+        '<section class="card"><h2>Order notifications</h2>' +
+        '<p class="hint" style="margin-bottom:12px">Get an email every time an order is paid online, so you never miss one. The sending account\'s app password is kept only on this server and is never shown again.</p>' +
+        '<div class="field"><label class="lbl" for="s-notify">Send notifications to</label><input id="s-notify" name="notifyEmail" type="text" maxlength="300" autocomplete="email" placeholder="you@gmail.com (separate several with commas)" value="' + esc(s.notifyEmail) + '"></div>' +
+        '<div class="row"><div class="field"><label class="lbl" for="s-smtp-user">Send from (Gmail address)</label><input id="s-smtp-user" name="smtpUser" type="email" maxlength="160" autocomplete="off" placeholder="you@gmail.com" value="' + esc(s.smtpUser) + '"></div>' +
+        '<div class="field"><label class="lbl" for="s-smtp-pass">Gmail app password</label><input id="s-smtp-pass" name="smtpPass" type="password" maxlength="200" autocomplete="new-password" placeholder="' + (s.smtpPassSet ? "Saved. Leave empty to keep it" : "16 letters from Google") + '"></div></div>' +
+        '<details style="margin:2px 0 12px"><summary class="muted small" style="cursor:pointer">How to get a Gmail app password</summary><ol class="hint" style="margin:8px 0 0 18px;line-height:1.7">' +
+        '<li>Turn on 2-Step Verification for the Gmail account (Google Account &rarr; Security).</li>' +
+        '<li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>, name it "VANTA" and click Create.</li>' +
+        '<li>Copy the 16-letter password into the field above and save. Your normal Gmail password is never used.</li></ol></details>' +
+        '<details style="margin:0 0 12px"><summary class="muted small" style="cursor:pointer">Not using Gmail?</summary><div class="row" style="margin-top:8px"><div class="field"><label class="lbl" for="s-smtp-host">SMTP server</label><input id="s-smtp-host" name="smtpHost" maxlength="120" value="' + esc(s.smtpHost) + '"></div>' +
+        '<div class="field" style="max-width:140px"><label class="lbl" for="s-smtp-port">Port</label><input id="s-smtp-port" name="smtpPort" type="number" min="1" max="65535" value="' + s.smtpPort + '"></div></div></details>' +
+        '<p class="hint">' + (s.notifyEmail && s.smtpUser && s.smtpPassSet ? "<strong>On.</strong> Order emails go to " + esc(s.notifyEmail) + "." : "<strong>Off.</strong> Fill in all three fields and save to turn it on.") + "</p>" +
+        (s.notifyEmail && s.smtpUser && s.smtpPassSet ? '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="notify-test-btn">Send a test email</button></div>' : "") +
+        "</section>" +
         // Online payments: keys are stored only on this server; the secret is never shown again once saved.
         '<section class="card"><h2>Online payments (iKhokha)</h2>' +
         (s.ikhokhaFromEnv ? '<div class="notice">Keys are set on the server itself, so the fields below are not used.</div>'
@@ -790,6 +805,11 @@
       $("#settings-form").addEventListener("submit", function (e) {
         e.preventDefault();
         api("/settings", { json: fd(new FormData(e.target)) }).then(function () { toast("Settings saved"); pageSettings(renderToken); }).catch(fail);
+      });
+      var notifyBtn = $("#notify-test-btn");
+      if (notifyBtn) notifyBtn.addEventListener("click", function () {
+        notifyBtn.disabled = true;
+        api("/notifications/test", { json: {} }).then(function () { toast("Test email sent. Check your inbox"); }).catch(fail).then(function () { notifyBtn.disabled = false; });
       });
       var testBtn = $("#ik-test-btn");
       if (testBtn) testBtn.addEventListener("click", function () {

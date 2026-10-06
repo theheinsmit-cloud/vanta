@@ -8,6 +8,7 @@ const { db, now } = require("../db");
 const { HttpError } = require("./util");
 const ik = require("./ikhokha");
 const orders = require("./orders");
+const mailer = require("./mailer");
 
 const CALLBACK_PATH = "/api/payments/ikhokha/callback";
 
@@ -57,6 +58,7 @@ async function confirm(o) {
     }
     try {
       orders.markPaid(o.id, { amountCents: o.total_cents, method: "Card (iKhokha)", reference: l.paylink_id });
+      mailer.notifyOrder(o.id, "paid");
     } catch (e) { /* already marked paid by a parallel check */ }
     return { paid: true };
   }
