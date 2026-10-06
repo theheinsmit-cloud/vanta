@@ -216,15 +216,15 @@
       </form>
 
       <div id="order-success" class="form-success" style="grid-column:1 / -1">
-        <h3>Your order is in.</h3>
+        <!-- Only shown if the payment page couldn't be opened: nothing is ordered until payment goes through. -->
+        <h3>Almost there.</h3>
         <p id="order-ref" class="eyebrow" style="margin:.4rem 0 1rem"></p>
         <p id="order-summary-line"></p>
-        <p>We've received your images, the exact positioning you set, and your delivery details. Our team prepares your print-ready files from them, so there's nothing more you need to send us.</p>
-        <div id="pay-retry" hidden>
+        <div id="pay-retry">
           <p class="discount-yes" id="pay-retry-msg"></p>
           <button class="btn btn-primary" type="button" id="pay-retry-btn">Go to payment</button>
         </div>
-        <p id="success-pay-note" class="form-note" style="margin-top:1.8rem;padding-top:1.4rem;border-top:1px solid var(--hairline)">No payment has been taken yet. We'll contact you to arrange payment, and production starts once it's confirmed. Keep your order reference handy if you get in touch.</p>
+        <p class="form-note" style="margin-top:1.8rem;padding-top:1.4rem;border-top:1px solid var(--hairline)">Nothing has been charged. Your order is placed as soon as your payment goes through.</p>
         <a class="btn btn-ghost" href="index.html" style="margin-top:1.2rem">Back to home</a>
       </div>
 

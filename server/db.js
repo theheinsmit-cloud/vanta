@@ -174,7 +174,7 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
 db.exec("DELETE FROM settings WHERE key IN ('price_single_cents', 'price_duo_cents', 'price_quad_cents')");
 
 // Volume discount applied to each order, frozen when it was placed (product_cents stays the pre-discount panel subtotal).
-for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"], ["promo_name", "TEXT"], ["promo_saving_cents", "INTEGER NOT NULL DEFAULT 0"], ["pay_token", "TEXT"]]) {
+for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"], ["promo_name", "TEXT"], ["promo_saving_cents", "INTEGER NOT NULL DEFAULT 0"], ["pay_token", "TEXT"], ["awaiting_payment", "INTEGER NOT NULL DEFAULT 0"]]) {
   if (!db.prepare("PRAGMA table_info(orders)").all().some((c) => c.name === col)) db.exec("ALTER TABLE orders ADD COLUMN " + col + " " + def);
 }
 

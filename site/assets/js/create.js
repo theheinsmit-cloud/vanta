@@ -290,11 +290,13 @@
   var PRICING = { pricePerPanelCents: 35000, handlingCents: 10000, tiers: [{ minPanels: 5, pct: 5 }, { minPanels: 10, pct: 10 }, { minPanels: 20, pct: 15 }] };
   var MAX_ITEMS = 10, MAX_QTY = 20;
   var ONLINE_PAY = false;   // true once iKhokha keys are saved: customers pay by card straight after ordering
+  // Orders are only placed with online payment; until it's set up, ordering is closed.
   function applyPayMode(){
-    submitBtn.textContent = ONLINE_PAY ? "Pay now" : "Place order";
+    submitBtn.textContent = ONLINE_PAY ? "Pay now" : "Ordering opens soon";
+    submitBtn.disabled = !ONLINE_PAY;
     document.getElementById("pay-note").textContent = ONLINE_PAY
-      ? "You'll pay by card on iKhokha's secure payment page. Your order goes to production once payment is complete."
-      : "No payment is taken now. We'll contact you to arrange payment, and production starts once it's confirmed.";
+      ? "You'll pay by card on iKhokha's secure payment page. Your order is placed once payment goes through."
+      : "Online ordering is being set up. Please check back soon.";
   }
   function loadPricing(){
     return fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
@@ -584,6 +586,7 @@
   /* ---------- submit: the order is saved, then (when online payment is on) the customer pays on iKhokha ---------- */
   orderForm.addEventListener("submit", function(e){
     e.preventDefault();
+    if (!ONLINE_PAY) return;
     if (!cart.length && !imageOk){
       vantaDialog({ title:"No image yet", message:"Please upload an image first." });
       return;
@@ -608,20 +611,14 @@
           location.href = order.payUrl;
           return;
         }
-        // The print files live with the order in the admin; the customer just gets a confirmation.
+        // Payment page didn't open: nothing is ordered yet, offer to try again.
         var panels = cart.reduce(function(n, it){ return n + it.panels * it.qty; }, 0);
         orderSummaryEl.textContent = plural(cart.length, "print") + ", " + plural(panels, "panel") + ", " + rands(currentQuote(cart).totalCents) + ".";
-        var retry = document.getElementById("pay-retry");
-        retry.hidden = !order.payError;
-        document.getElementById("success-pay-note").hidden = !!order.payError;
-        if (order.payError){
-          document.getElementById("pay-retry-msg").textContent = order.payError;
-          document.getElementById("pay-retry-btn").onclick = function(){
-            var b = this; b.disabled = true;
-            retryPayment(order.orderNumber, order.payToken).catch(function(err){ b.disabled = false; vantaDialog({ title: "Payment page didn't open", message: err.message }); });
-          };
-        }
-        orderRefEl.textContent = "Order reference: " + order.orderNumber;
+        document.getElementById("pay-retry-msg").textContent = order.payError || "We couldn't open the payment page. Please try again.";
+        document.getElementById("pay-retry-btn").onclick = function(){
+          var b = this; b.disabled = true;
+          retryPayment(order.checkout, order.payToken).catch(function(err){ b.disabled = false; vantaDialog({ title: "Payment page didn't open", message: err.message }); });
+        };
         orderForm.hidden = true;
         orderSuccess.classList.add("show");
         orderSuccess.scrollIntoView({ behavior: "smooth", block: "start" });

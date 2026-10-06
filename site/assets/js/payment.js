@@ -1,4 +1,4 @@
-/* Where customers land after iKhokha's payment page (?order=VNT-1001&t=<private token>&r=success|failed|cancelled).
+/* Where customers land after iKhokha's payment page (?order=<checkout ref>&t=<private token>&r=success|failed|cancelled).
    The "r" value only sets the first message: whether the order is paid always comes from our server,
    which confirms it with iKhokha. On success we poll for a short while, since the confirmation can lag. */
 (function(){
@@ -19,11 +19,10 @@
       result === "success" ? "Check its status in the admin, then refund it in your iKhokha dashboard." : "You can create a new test link in the admin Settings.", "", false);
     return;
   }
-  if (!order || !token){
+  if (!token){
     show("We couldn't find that order.", "Please use the link from your payment page, or get in touch with us on Instagram.", "", false);
     return;
   }
-  el("pay-ref").textContent = "Order reference: " + order;
 
   var tries = 0;
   function poll(){
@@ -34,6 +33,7 @@
         var summary = s.panels + " panel" + (s.panels === 1 ? "" : "s") + ", " + rands(s.totalCents) + ".";
         if (s.paid){
           el("pay-eyebrow").textContent = "Payment received";
+          el("pay-ref").textContent = "Order reference: " + s.orderNumber;   // a real order number only exists once paid
           show("Thank you, your order is paid.", "We've received your payment and your order is now in our production queue. We'll be in touch when it ships.", summary, false);
           return;
         }
@@ -43,11 +43,11 @@
           return;
         }
         if (result === "success"){
-          show("We're still confirming your payment.", "If your card was charged, there's nothing more to do: we'll confirm it on our side shortly. If you're unsure, please don't pay again, get in touch with us on Instagram with your order reference.", summary, false);
+          show("We're still confirming your payment.", "If your card was charged, there's nothing more to do: we'll confirm it on our side shortly. If you're unsure, please don't pay again: get in touch with us on Instagram.", summary, false);
           return;
         }
         show(result === "cancelled" ? "Payment cancelled." : "Payment didn't go through.",
-          "Your order is saved but not paid yet, so it hasn't gone to production. You can try again below.", summary, s.canPay);
+          "Your order isn't placed until payment goes through. Your prints are saved, so you can try again below.", summary, s.canPay);
       })
       .catch(function(){ show("We couldn't find that order.", "Please use the link from your payment page, or get in touch with us on Instagram.", "", false); });
   }

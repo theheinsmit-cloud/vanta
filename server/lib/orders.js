@@ -1,4 +1,5 @@
 const fs = require("fs");
+const crypto = require("crypto");
 const path = require("path");
 const { db, tx, now, getSetting, setSetting } = require("../db");
 const { UPLOAD_DIR } = require("../config");
@@ -67,7 +68,9 @@ const MAX_ITEMS = 10, MAX_QTY = 20;
 
 // f = customer details; items = [{ layout, orientation, arrangement, qty, dpi, lowResConfirmed, original, panels }]
 // Each item is one print (one image, one crop); qty is identical copies of it.
-function createOrder(f, items) {
+// opts.checkout: an online-payment checkout. It gets a private CHK- reference, stays hidden from the admin
+// and only becomes a real, numbered order in promoteCheckout() once the payment is confirmed.
+function createOrder(f, items, opts = {}) {
   const first = clampStr(f.firstName, 80), last = clampStr(f.lastName, 80);
   const email = clampStr(f.email, 160).toLowerCase();
   if (!first || !last) throw new HttpError(400, "Please enter your first and last name.");
@@ -114,21 +117,25 @@ function createOrder(f, items) {
   const placedAt = now();
 
   return tx(() => {
-    const n = parseInt(getSetting("next_order_number"), 10);
-    setSetting("next_order_number", n + 1);
-    const orderNumber = "VNT-" + n;
+    let orderNumber;
+    if (opts.checkout) orderNumber = "CHK-" + crypto.randomBytes(5).toString("hex").toUpperCase();
+    else {
+      const n = parseInt(getSetting("next_order_number"), 10);
+      setSetting("next_order_number", n + 1);
+      orderNumber = "VNT-" + n;
+    }
 
     // Order-level layout columns summarise the cart: "mixed" when it holds more than one print.
     const res = db.prepare(`INSERT INTO orders
       (order_number, created_at, first_name, last_name, email, phone, address, city, postal_code,
        layout, orientation, arrangement, panels, delivery_method,
        price_per_panel_cents, product_cents, discount_pct, discount_cents, promo_name, promo_saving_cents, shipping_cents, total_cents,
-       cost_snapshot, est_cost_cents, dpi_estimate, low_res_confirmed, rights_confirmed)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+       cost_snapshot, est_cost_cents, dpi_estimate, low_res_confirmed, rights_confirmed, awaiting_payment)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(orderNumber, placedAt, first, last, email, phone, address, city, postal,
         one ? one.layout : "mixed", one ? one.orientation : "mixed", one ? one.arrangement : null, totalPanels, "Courier",
         pricePerPanelCents, q.baseCents, q.discountPct, q.discountCents, q.promo ? q.promo.name : null, q.promoSavingCents, q.handlingCents, q.totalCents,
-        JSON.stringify(snapshot), snapshot.totalCents, dpis.length ? Math.min(...dpis) : null, lines.some((l) => l.lowResConfirmed) ? 1 : 0, 1);
+        JSON.stringify(snapshot), snapshot.totalCents, dpis.length ? Math.min(...dpis) : null, lines.some((l) => l.lowResConfirmed) ? 1 : 0, 1, opts.checkout ? 1 : 0);
     const id = Number(res.lastInsertRowid);
 
     const dir = path.join(UPLOAD_DIR, orderNumber);
@@ -163,9 +170,47 @@ function createOrder(f, items) {
       fs.rmSync(dir, { recursive: true, force: true });
       throw err;
     }
-    addEvent(id, "placed", null, "new", "Order placed on the website" + (lines.length > 1 ? " (" + lines.length + " prints)" : ""));
+    addEvent(id, opts.checkout ? "checkout" : "placed", null, opts.checkout ? null : "new", (opts.checkout ? "Checkout started on the website" : "Order placed on the website") + (lines.length > 1 ? " (" + lines.length + " prints)" : ""));
     return { id, orderNumber };
   });
+}
+
+/* ---------------- checkouts (online payment) ---------------- */
+// A paid checkout becomes a real order: next VNT number, files renamed to match, placed now.
+function promoteCheckout(id) {
+  const o = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  if (!o || !o.awaiting_payment) return o;
+  return tx(() => {
+    const n = parseInt(getSetting("next_order_number"), 10);
+    setSetting("next_order_number", n + 1);
+    const number = "VNT-" + n;
+    const from = path.join(UPLOAD_DIR, o.order_number), to = path.join(UPLOAD_DIR, number);
+    if (fs.existsSync(from)) fs.renameSync(from, to);
+    try {
+      db.prepare("UPDATE orders SET order_number = ?, awaiting_payment = 0, created_at = ? WHERE id = ?").run(number, now(), id);
+      db.prepare("UPDATE order_files SET download_name = replace(download_name, ?, ?) WHERE order_id = ?").run(o.order_number, number, id);
+      addEvent(id, "placed", null, "new", "Order placed on the website, paid online (checkout " + o.order_number + ")");
+    } catch (err) {
+      if (fs.existsSync(to)) fs.renameSync(to, from);
+      throw err;
+    }
+    return db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  });
+}
+
+// Checkouts that were never paid are deleted (with their images) after a week.
+function cleanupCheckouts(days = 7) {
+  const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+  const old = db.prepare("SELECT id, order_number FROM orders WHERE awaiting_payment = 1 AND created_at < ?").all(cutoff);
+  for (const o of old) {
+    tx(() => {
+      for (const t of ["order_files", "order_items", "order_paylinks", "order_events"]) db.prepare("DELETE FROM " + t + " WHERE order_id = ?").run(o.id);
+      db.prepare("DELETE FROM orders WHERE id = ?").run(o.id);
+    });
+    fs.rmSync(path.join(UPLOAD_DIR, o.order_number), { recursive: true, force: true });
+  }
+  if (old.length) console.log("Removed " + old.length + " unpaid checkout(s) older than " + days + " days");
+  return old.length;
 }
 
 /* ---------------- money maths ---------------- */
@@ -240,14 +285,16 @@ function orderView(o) {
 }
 
 /* ---------------- queries ---------------- */
+// Admin-visible orders only: unpaid checkouts don't exist as far as the admin is concerned.
 function getRow(id) {
-  const o = db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+  const o = db.prepare("SELECT * FROM orders WHERE id = ? AND awaiting_payment = 0").get(id);
   if (!o) throw new HttpError(404, "Order not found.");
   return o;
 }
 
 function listOrders({ q, status, payment, archived } = {}) {
   const where = [], params = [];
+  where.push("awaiting_payment = 0");
   if (archived === "1") where.push("archived = 1");
   else if (archived !== "all") where.push("archived = 0");
   if (status && STATUS_KEYS.includes(status)) { where.push("status = ?"); params.push(status); }
@@ -274,7 +321,7 @@ function getOrderDetail(id) {
   const files = db.prepare("SELECT * FROM order_files WHERE order_id = ? ORDER BY kind DESC, panel_index").all(id).map((f) => fileView(id, f));
   const events = db.prepare("SELECT * FROM order_events WHERE order_id = ? ORDER BY id").all(id)
     .map((e) => ({ at: e.at, type: e.type, from: e.from_value, to: e.to_value, detail: e.detail }));
-  const others = db.prepare("SELECT id, order_number, created_at, status, total_cents FROM orders WHERE email = ? AND id != ? ORDER BY created_at DESC").all(o.email, id)
+  const others = db.prepare("SELECT id, order_number, created_at, status, total_cents FROM orders WHERE email = ? AND id != ? AND awaiting_payment = 0 ORDER BY created_at DESC").all(o.email, id)
     .map((x) => ({ id: x.id, orderNumber: x.order_number, createdAt: x.created_at, status: x.status, statusLabel: STATUS_LABEL[x.status], total: rand(x.total_cents) }));
   const snapshot = JSON.parse(o.cost_snapshot);
   return {
@@ -297,7 +344,7 @@ function getOrderFile(orderId, fileId) {
 }
 
 function customerOrders(email) {
-  const rows = db.prepare("SELECT * FROM orders WHERE email = ? ORDER BY created_at DESC").all(String(email).toLowerCase());
+  const rows = db.prepare("SELECT * FROM orders WHERE email = ? AND awaiting_payment = 0 ORDER BY created_at DESC").all(String(email).toLowerCase());
   return rows.map(orderView);
 }
 
@@ -438,5 +485,6 @@ module.exports = {
   MAX_ITEMS, MAX_QTY,
   imageInfo, getPricing, buildCostSnapshot, createOrder, financials, orderView, listOrders,
   getOrderDetail, getOrderFile, customerOrders, changeStatus, markPaid, markUnpaid, recordRefund, addEvent,
+  promoteCheckout, cleanupCheckouts,
   updateShipping, setNotes, setArchived, getRow
 };

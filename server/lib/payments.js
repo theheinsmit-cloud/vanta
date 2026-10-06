@@ -1,7 +1,7 @@
 // Online card payments for orders via iKhokha. The flow:
-//   order placed -> startPayment() creates a payment link -> customer pays on iKhokha's page ->
+//   checkout saved (hidden, CHK- reference) -> startPayment() creates a payment link -> customer pays on iKhokha's page ->
 //   iKhokha calls our webhook and the customer returns to /payment.html -> confirm() asks iKhokha
-//   for the link's real status and only then marks the order paid. A webhook or a page visit is
+//   for the link's real status and only then turns the checkout into a numbered, paid order. A webhook or a page visit is
 //   never trusted on its own: the status comes from iKhokha's API, and the amount must match.
 const crypto = require("crypto");
 const { db, now } = require("../db");
@@ -13,8 +13,9 @@ const mailer = require("./mailer");
 const CALLBACK_PATH = "/api/payments/ikhokha/callback";
 
 const findOrder = (number) => db.prepare("SELECT * FROM orders WHERE order_number = ?").get(String(number || ""));
+// Looked up by the private token alone: a checkout's reference changes to VNT-... once it is paid.
 function orderForToken(number, token) {
-  const o = findOrder(number);
+  const o = token ? db.prepare("SELECT * FROM orders WHERE pay_token = ?").get(String(token)) : null;
   const a = Buffer.from(String((o && o.pay_token) || "")), b = Buffer.from(String(token || ""));
   if (!o || !a.length || a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new HttpError(404, "Order not found.");
   return o;
@@ -57,6 +58,7 @@ async function confirm(o) {
       continue;
     }
     try {
+      if (o.awaiting_payment) orders.promoteCheckout(o.id);   // only now does it become a real order
       orders.markPaid(o.id, { amountCents: o.total_cents, method: "Card (iKhokha)", reference: l.paylink_id });
       mailer.notifyOrder(o.id, "paid");
     } catch (e) { /* already marked paid by a parallel check */ }
@@ -87,11 +89,11 @@ async function publicStatus(number, token, check) {
     if (Date.now() - last > 2000) {
       recentChecks.set(o.id, Date.now());
       try { await confirm(o); } catch (e) { console.error("Payment check failed for " + o.order_number + ": " + e.message); }
-      o = findOrder(number);
+      o = db.prepare("SELECT * FROM orders WHERE id = ?").get(o.id);   // reference may have changed CHK- -> VNT-
     }
   }
   return {
-    orderNumber: o.order_number, paid: o.payment_status !== "pending", totalCents: o.total_cents, panels: o.panels,
+    orderNumber: o.awaiting_payment ? null : o.order_number, paid: o.payment_status !== "pending", totalCents: o.total_cents, panels: o.panels,
     canPay: o.payment_status === "pending" && !["cancelled", "refunded"].includes(o.status) && ik.isConfigured()
   };
 }

@@ -82,21 +82,22 @@ router.post("/orders", orderLimit, (req, res, next) => {
       };
     });
 
+    // Orders only exist once paid: without online payment set up, nothing can be ordered.
+    if (!ik.isConfigured()) throw new HttpError(503, "Online ordering is being set up. Please check back soon.");
     const result = createOrder({
       firstName: b.firstName, lastName: b.lastName, email: b.email, phone: b.phone,
       address: b.address, city: b.city, postal: b.postal, rightsConfirmed: b.rights === "true",
       expectedTotalCents: b.expectedTotalCents === undefined || b.expectedTotalCents === "" ? null : Number(b.expectedTotalCents)
-    }, items);
+    }, items, { checkout: true });
 
-    // Always pay online when iKhokha is set up: the order is saved first, then the customer goes to pay.
-    if (!ik.isConfigured()) return res.status(201).json({ ok: true, orderNumber: result.orderNumber });
+    // The checkout is saved (hidden from the admin), then the customer goes to pay.
     const order = payments.findOrder(result.orderNumber);
     try {
       const pay = await payments.startPayment(order, publicBase(req));
-      res.status(201).json({ ok: true, orderNumber: result.orderNumber, payUrl: pay.paylinkUrl, payToken: pay.token });
+      res.status(201).json({ ok: true, payUrl: pay.paylinkUrl, payToken: pay.token });
     } catch (e) {
       console.error("Could not start payment for " + result.orderNumber + ": " + e.message);
-      res.status(201).json({ ok: true, orderNumber: result.orderNumber, payToken: payments.ensureToken(payments.findOrder(result.orderNumber)), payError: "We saved your order but couldn't open the payment page. Please try again." });
+      res.status(201).json({ ok: true, checkout: result.orderNumber, payToken: payments.ensureToken(payments.findOrder(result.orderNumber)), payError: "We couldn't open the payment page. Your prints are saved, so please try again." });
     }
   } catch (err) {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, pricesChanged: err.status === 409 });

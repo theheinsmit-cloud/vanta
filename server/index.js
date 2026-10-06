@@ -38,3 +38,9 @@ app.listen(cfg.PORT, "0.0.0.0", () => {
   console.log("VANTA running on http://localhost:" + cfg.PORT);
   if (!auth.isConfigured()) console.log("Admin login is disabled. Run: npm run set-admin");
 });
+
+// Unpaid checkouts are removed after a week (on start, then every 6 hours).
+const { cleanupCheckouts } = require("./lib/orders");
+const sweep = () => { try { cleanupCheckouts(); } catch (e) { console.error("Checkout cleanup failed:", e); } };
+sweep();
+setInterval(sweep, 6 * 3600 * 1000).unref();

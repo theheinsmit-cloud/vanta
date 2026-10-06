@@ -8,7 +8,7 @@ const { cleanTiers } = require("../../site/assets/js/pricing");
 const { financials, getPricing } = require("./orders");
 const { rand, toCents, clampStr, slug, saDate, isDateStr, safeFilename, HttpError } = require("./util");
 
-const allOrders = () => db.prepare("SELECT * FROM orders").all();
+const allOrders = () => db.prepare("SELECT * FROM orders WHERE awaiting_payment = 0").all(); // unpaid checkouts never count
 const inRange = (d, from, to) => (!from || d >= from) && (!to || d <= to);
 
 /* ---------------- income (generated from paid orders) ---------------- */
