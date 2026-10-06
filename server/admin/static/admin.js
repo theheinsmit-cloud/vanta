@@ -262,9 +262,12 @@
 
       // financials
       '<section class="card"><div class="card-head"><h2>Financials</h2><div class="actions">' +
-      (o.payment.status === "pending" ? '<button class="btn sm" type="button" id="btn-pay">Record payment</button>' : "") +
+      (o.payment.status === "pending" && d.paylinks.length ? '<button class="btn sm" type="button" id="btn-paycheck">Check payment status</button>' : "") +
+      (o.payment.status === "pending" ? '<button class="btn sm' + (d.paylinks.length ? " ghost" : "") + '" type="button" id="btn-pay">Record payment</button>' : "") +
       (o.payment.status === "paid" && m.refunded === 0 ? '<button class="btn sm ghost" type="button" id="btn-unpay">Mark as unpaid</button>' : "") +
       (canRefund ? '<button class="btn sm danger" type="button" id="btn-refund">Record refund</button>' : "") + "</div></div>" +
+      (d.paylinks.length ? '<p class="hint" style="margin:-4px 0 12px">Online payment (iKhokha): ' + d.paylinks.map(function (l) { return esc(l.reference) + " · " + esc(l.paylinkId); }).join(", ") +
+        (o.payment.status === "pending" ? ". Not paid yet. Paid orders are marked automatically; use <strong>Check payment status</strong> if one seems stuck." : ".") + "</p>" : "") +
       // As frozen when the order was placed; later pricing changes never alter these.
       '<div class="money-row"><span>Total panels</span><span>' + o.panels + "</span></div>" +
       '<div class="money-row"><span>Product subtotal (' + o.panels + " × " + money(m.pricePerPanel) + ")</span><span>" + money(m.product) + "</span></div>" +
@@ -366,6 +369,15 @@
         submit: o.archived ? "Restore" : "Archive",
         onConfirm: function () { return run(api("/orders/" + id + "/archive", { json: { archived: !o.archived } }), o.archived ? "Order restored" : "Order archived"); }
       });
+    });
+
+    var payCheck = $("#btn-paycheck");
+    if (payCheck) payCheck.addEventListener("click", function () {
+      payCheck.disabled = true;
+      api("/orders/" + id + "/payment-check", { json: {} }).then(function (r) {
+        toast(r.paid ? "Payment confirmed by iKhokha" : "iKhokha shows no completed payment yet");
+        return reload();
+      }).catch(fail).then(function () { payCheck.disabled = false; });
     });
 
     var pay = $("#btn-pay");
@@ -762,10 +774,35 @@
         '<section class="card"><h2>Business &amp; invoice details</h2><div class="row">' + txt("business_name", "Trading name", s.business_name) + txt("business_legal_name", "Registered name (optional)", s.business_legal_name) + "</div>" +
         txt("business_address", "Address", s.business_address, true) + '<div class="row">' + txt("business_email", "Email", s.business_email) + txt("business_phone", "Phone", s.business_phone) + txt("vat_number", "VAT number (optional)", s.vat_number) + "</div>" +
         txt("bank_details", "Bank details (shown on unpaid invoices)", s.bank_details, true) + txt("invoice_notes", "Invoice footer note", s.invoice_notes, true) + "</section>" +
+        // Online payments: keys are stored only on this server; the secret is never shown again once saved.
+        '<section class="card"><h2>Online payments (iKhokha)</h2>' +
+        (s.ikhokhaFromEnv ? '<div class="notice">Keys are set on the server itself, so the fields below are not used.</div>'
+          : '<p class="hint" style="margin-bottom:12px">From your iKhokha dashboard: <strong>iK Pay API</strong> &rarr; <strong>Generate New IK API Key</strong>. Paste the two values here and save. The secret is kept only on this server and is never shown again.</p>' +
+            '<div class="row"><div class="field"><label class="lbl" for="s-ik-id">Application ID</label><input id="s-ik-id" name="ikhokhaAppId" maxlength="100" autocomplete="off" value="' + esc(s.ikhokhaAppId) + '"></div>' +
+            '<div class="field"><label class="lbl" for="s-ik-secret">Application secret</label><input id="s-ik-secret" name="ikhokhaSecret" type="password" maxlength="200" autocomplete="new-password" placeholder="' + (s.ikhokhaSecretSet ? "Saved. Leave empty to keep it" : "Paste the secret") + '"></div></div>') +
+        '<p class="hint" id="ik-status">' + (s.ikhokhaFromEnv || (s.ikhokhaAppId && s.ikhokhaSecretSet) ? "<strong>Connected.</strong> Customers pay by card on iKhokha's secure page, and paid orders are marked automatically."
+          : "<strong>Not connected.</strong> Orders are taken without payment until both keys are saved.") + "</p>" +
+        (!s.ikhokhaFromEnv && (s.ikhokhaAppId || s.ikhokhaSecretSet) ? '<label class="check" style="margin-top:6px"><input type="checkbox" name="ikhokhaClear" value="1"> Remove the saved keys (turns online payment off)</label>' : "") +
+        (s.ikhokhaFromEnv || (s.ikhokhaAppId && s.ikhokhaSecretSet) ? '<div class="section" style="margin-top:16px"><h3 style="font:600 16px var(--display);margin-bottom:8px">Test payment</h3><p class="hint" style="margin-bottom:10px">iKhokha has no test mode, so this is a real card payment. Make a small one to check everything works, then refund it in your iKhokha dashboard.</p>' +
+          '<div class="row" style="align-items:flex-end"><div class="field" style="max-width:160px"><label class="lbl" for="s-ik-test">Amount (R)</label><input id="s-ik-test" type="number" min="1" max="50" step="1" value="5"></div><div class="field"><button class="btn ghost" type="button" id="ik-test-btn">Create test payment link</button></div></div><div id="ik-test-out" class="hint"></div></div>' : "") +
+        "</section>" +
         '<div><button class="btn" type="submit">Save settings</button></div></form>';
       $("#settings-form").addEventListener("submit", function (e) {
         e.preventDefault();
-        api("/settings", { json: fd(new FormData(e.target)) }).then(function () { toast("Settings saved"); }).catch(fail);
+        api("/settings", { json: fd(new FormData(e.target)) }).then(function () { toast("Settings saved"); pageSettings(renderToken); }).catch(fail);
+      });
+      var testBtn = $("#ik-test-btn");
+      if (testBtn) testBtn.addEventListener("click", function () {
+        testBtn.disabled = true;
+        api("/payments/test", { json: { amount: $("#s-ik-test").value } }).then(function (r) {
+          var out = $("#ik-test-out");
+          out.innerHTML = 'Test link ready: <a href="' + esc(r.paylinkUrl) + '" target="_blank" rel="noopener">open the payment page</a> and pay with your card. Then <button class="btn sm ghost" type="button" id="ik-test-check">Check its status</button> <span id="ik-test-status"></span>';
+          $("#ik-test-check").addEventListener("click", function () {
+            api("/payments/test/" + encodeURIComponent(r.paylinkID)).then(function (st) {
+              $("#ik-test-status").textContent = "iKhokha says: " + (st && st.status ? st.status : "unknown") + (st && st.amount != null ? " (" + money(st.amount / 100) + ")" : "") + ".";
+            }).catch(fail);
+          });
+        }).catch(fail).then(function () { testBtn.disabled = false; });
       });
     });
   }

@@ -279,6 +279,8 @@ function getOrderDetail(id) {
   const snapshot = JSON.parse(o.cost_snapshot);
   return {
     order: orderView(o), files, events, otherOrders: others,
+    paylinks: db.prepare("SELECT paylink_id, external_id, amount_cents, created_at FROM order_paylinks WHERE order_id = ? ORDER BY id").all(id)
+      .map((l) => ({ paylinkId: l.paylink_id, reference: l.external_id, amount: rand(l.amount_cents), createdAt: l.created_at })),
     costSnapshot: {
       takenAt: snapshot.takenAt, total: rand(snapshot.totalCents),
       lines: snapshot.lines.map((l) => ({ label: l.label, basis: l.basis, unit: rand(l.unitCents), quantity: l.quantity, total: rand(l.totalCents) }))
@@ -435,6 +437,6 @@ function setArchived(id, archived) {
 module.exports = {
   MAX_ITEMS, MAX_QTY,
   imageInfo, getPricing, buildCostSnapshot, createOrder, financials, orderView, listOrders,
-  getOrderDetail, getOrderFile, customerOrders, changeStatus, markPaid, markUnpaid, recordRefund,
+  getOrderDetail, getOrderFile, customerOrders, changeStatus, markPaid, markUnpaid, recordRefund, addEvent,
   updateShipping, setNotes, setArchived, getRow
 };

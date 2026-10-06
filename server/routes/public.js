@@ -3,6 +3,12 @@ const multer = require("multer");
 const { getPricing, createOrder, imageInfo, MAX_ITEMS, MAX_QTY } = require("../lib/orders");
 const { HttpError } = require("../lib/util");
 const { activePromo } = require("../../site/assets/js/pricing");
+const cfg = require("../config");
+const ik = require("../lib/ikhokha");
+const payments = require("../lib/payments");
+
+// Where customers come back to and where iKhokha posts notifications (fixed in production).
+const publicBase = (req) => cfg.PUBLIC_URL || req.protocol + "://" + req.get("host");
 const { sameOrigin } = require("../auth");
 
 const router = express.Router();
@@ -30,7 +36,7 @@ router.get("/pricing", (req, res) => {
   const p = getPricing();
   res.set("Cache-Control", "no-store");
   // promo is only sent while it runs (server clock); pages also drop it themselves at endsAt.
-  res.json({ pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers, promo: activePromo(p), maxItems: MAX_ITEMS, maxQty: MAX_QTY });
+  res.json({ pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers, promo: activePromo(p), onlinePayment: ik.isConfigured(), maxItems: MAX_ITEMS, maxQty: MAX_QTY });
 });
 
 router.post("/orders", orderLimit, (req, res, next) => {
@@ -38,7 +44,7 @@ router.post("/orders", orderLimit, (req, res, next) => {
     if (err) return res.status(err.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: err.code === "LIMIT_FILE_SIZE" ? "One of the files is too large." : "The upload could not be read." });
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   try {
     const b = req.body || {};
     let meta;
@@ -82,12 +88,48 @@ router.post("/orders", orderLimit, (req, res, next) => {
       expectedTotalCents: b.expectedTotalCents === undefined || b.expectedTotalCents === "" ? null : Number(b.expectedTotalCents)
     }, items);
 
-    res.status(201).json({ ok: true, orderNumber: result.orderNumber });
+    // Always pay online when iKhokha is set up: the order is saved first, then the customer goes to pay.
+    if (!ik.isConfigured()) return res.status(201).json({ ok: true, orderNumber: result.orderNumber });
+    const order = payments.findOrder(result.orderNumber);
+    try {
+      const pay = await payments.startPayment(order, publicBase(req));
+      res.status(201).json({ ok: true, orderNumber: result.orderNumber, payUrl: pay.paylinkUrl, payToken: pay.token });
+    } catch (e) {
+      console.error("Could not start payment for " + result.orderNumber + ": " + e.message);
+      res.status(201).json({ ok: true, orderNumber: result.orderNumber, payToken: payments.ensureToken(payments.findOrder(result.orderNumber)), payError: "We saved your order but couldn't open the payment page. Please try again." });
+    }
   } catch (err) {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, pricesChanged: err.status === 409 });
     console.error("Order creation failed:", err);
     res.status(500).json({ error: "Something went wrong saving your order. Please try again." });
   }
+});
+
+
+/* ---------- online payment (iKhokha) ---------- */
+// A new payment link for an unpaid order (e.g. after a failed or cancelled attempt). Needs the order's private token.
+router.post("/payments/start", express.json({ limit: "10kb" }), async (req, res) => {
+  try {
+    const o = payments.orderForToken(req.body && req.body.order, req.body && req.body.token);
+    const pay = await payments.startPayment(o, publicBase(req));
+    res.json({ payUrl: pay.paylinkUrl });
+  } catch (err) {
+    res.status(err instanceof HttpError ? err.status : 500).json({ error: err instanceof HttpError ? err.message : "Something went wrong. Please try again." });
+  }
+});
+
+// The payment page polls this; check=1 also asks iKhokha directly (rate-limited per order).
+router.get("/payments/status", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try { res.json(await payments.publicStatus(req.query.order, req.query.t, req.query.check === "1")); }
+  catch (err) { res.status(err instanceof HttpError ? err.status : 500).json({ error: err instanceof HttpError ? err.message : "Something went wrong." }); }
+});
+
+// iKhokha's webhook (server to server). The raw body is kept for signature checking.
+router.post("/payments/ikhokha/callback", express.json({ limit: "20kb", verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); } }), async (req, res) => {
+  try { await payments.handleWebhook(req.rawBody, req.body || {}, req.headers["ik-sign"]); }
+  catch (err) { console.error("iKhokha webhook handling failed: " + err.message); }
+  res.sendStatus(200);
 });
 
 module.exports = router;

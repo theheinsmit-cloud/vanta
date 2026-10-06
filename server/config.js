@@ -20,6 +20,8 @@ module.exports = {
   RECEIPT_DIR,
   PORT: parseInt(process.env.PORT, 10) || 8080,
   isProd,
+  // Public address used in payment links (where customers return and iKhokha sends notifications).
+  PUBLIC_URL: (process.env.PUBLIC_URL || (isProd ? "https://vantastudios.co.za" : "")).replace(/\/$/, ""),
   // Admin credentials live only in server-side environment variables (.env).
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || "",
   ADMIN_PASSWORD_HASH: process.env.ADMIN_PASSWORD_HASH || "",

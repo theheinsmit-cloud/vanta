@@ -212,7 +212,7 @@
         <div class="price-row total"><span class="label">Total</span><span id="price-total"></span></div>
 
         <button id="submit-order" class="btn btn-primary" type="submit" style="width:100%;margin-top:1.4rem">Place order</button>
-        <p class="form-note" style="text-align:center;margin-top:.9rem">No payment is taken now. We'll contact you to arrange payment, and production starts once it's confirmed.</p>
+        <p id="pay-note" class="form-note" style="text-align:center;margin-top:.9rem">No payment is taken now. We'll contact you to arrange payment, and production starts once it's confirmed.</p>
       </form>
 
       <div id="order-success" class="form-success" style="grid-column:1 / -1">
@@ -220,7 +220,11 @@
         <p id="order-ref" class="eyebrow" style="margin:.4rem 0 1rem"></p>
         <p id="order-summary-line"></p>
         <p>We've received your images, the exact positioning you set, and your delivery details. Our team prepares your print-ready files from them, so there's nothing more you need to send us.</p>
-        <p class="form-note" style="margin-top:1.8rem;padding-top:1.4rem;border-top:1px solid var(--hairline)">No payment has been taken yet. We'll contact you to arrange payment, and production starts once it's confirmed. Keep your order reference handy if you get in touch.</p>
+        <div id="pay-retry" hidden>
+          <p class="discount-yes" id="pay-retry-msg"></p>
+          <button class="btn btn-primary" type="button" id="pay-retry-btn">Go to payment</button>
+        </div>
+        <p id="success-pay-note" class="form-note" style="margin-top:1.8rem;padding-top:1.4rem;border-top:1px solid var(--hairline)">No payment has been taken yet. We'll contact you to arrange payment, and production starts once it's confirmed. Keep your order reference handy if you get in touch.</p>
         <a class="btn btn-ghost" href="index.html" style="margin-top:1.2rem">Back to home</a>
       </div>
 

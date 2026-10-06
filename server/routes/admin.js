@@ -7,6 +7,8 @@ const cfg = require("../config");
 const { db } = require("../db");
 const orders = require("../lib/orders");
 const fin = require("../lib/finance");
+const payments = require("../lib/payments");
+const ik = require("../lib/ikhokha");
 const { renderInvoice } = require("../lib/invoice");
 const { buildZip } = require("../lib/zip");
 const { STATUSES, LAYOUT_LABEL } = require("../lib/constants");
@@ -16,13 +18,17 @@ const router = express.Router();
 const receiptUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 20, fieldSize: 20 * 1024 } }).single("receipt");
 
 // Wraps handlers so thrown HttpErrors become clean JSON responses.
+// Wraps sync and async handlers alike, turning errors into JSON responses.
 const h = (fn) => (req, res) => {
-  try { fn(req, res); }
-  catch (err) {
+  const fail = (err) => {
     if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
     console.error("Admin error:", err);
     res.status(500).json({ error: "Something went wrong." });
-  }
+  };
+  try {
+    const r = fn(req, res);
+    if (r && typeof r.catch === "function") r.catch(fail);
+  } catch (err) { fail(err); }
 };
 const id = (req) => {
   const n = parseInt(req.params.id, 10);
@@ -97,6 +103,18 @@ api.post("/orders/:id/payment", h((req, res) => {
   res.json({ order: orders.markPaid(id(req), { amountCents: optCents(b.amount), method: b.method, reference: b.reference, date: b.date || "" }) });
 }));
 api.post("/orders/:id/refund", h((req, res) => res.json({ order: orders.recordRefund(id(req), { amountCents: optCents(req.body.amount), reason: req.body.reason }) })));
+// Online payment (iKhokha): ask iKhokha whether this order has been paid, and record it if so.
+api.post("/orders/:id/payment-check", h(async (req, res) => {
+  const r = await payments.confirm(orders.getRow(id(req)));
+  res.json({ paid: r.paid, order: orders.orderView(orders.getRow(id(req))) });
+}));
+// A small live test payment (not tied to an order) to prove the keys work; refund it in the iKhokha dashboard.
+api.post("/payments/test", h(async (req, res) => {
+  const cents = Math.round(Number(req.body.amount) * 100);
+  res.json(await payments.startTestPayment(cents, cfg.PUBLIC_URL || req.protocol + "://" + req.get("host")));
+}));
+api.get("/payments/test/:pid", h(async (req, res) => res.json(await ik.getStatus(req.params.pid))));
+
 api.post("/orders/:id/archive", h((req, res) => res.json({ order: orders.setArchived(id(req), !!req.body.archived) })));
 
 api.get("/orders/:id/files/:fid", h((req, res) => {

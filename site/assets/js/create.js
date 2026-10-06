@@ -289,12 +289,21 @@
      The config below is a fallback until /api/pricing answers. */
   var PRICING = { pricePerPanelCents: 35000, handlingCents: 10000, tiers: [{ minPanels: 5, pct: 5 }, { minPanels: 10, pct: 10 }, { minPanels: 20, pct: 15 }] };
   var MAX_ITEMS = 10, MAX_QTY = 20;
+  var ONLINE_PAY = false;   // true once iKhokha keys are saved: customers pay by card straight after ordering
+  function applyPayMode(){
+    submitBtn.textContent = ONLINE_PAY ? "Pay now" : "Place order";
+    document.getElementById("pay-note").textContent = ONLINE_PAY
+      ? "You'll pay by card on iKhokha's secure payment page. Your order goes to production once payment is complete."
+      : "No payment is taken now. We'll contact you to arrange payment, and production starts once it's confirmed.";
+  }
   function loadPricing(){
     return fetch("/api/pricing", { cache: "no-store" }).then(function(r){ return r.ok ? r.json() : null; }).then(function(p){
       if (p && p.pricePerPanelCents > 0){
         PRICING = { pricePerPanelCents: p.pricePerPanelCents, handlingCents: p.handlingCents, tiers: p.tiers || [], promo: p.promo || null };
         if (p.maxItems) MAX_ITEMS = p.maxItems;
         if (p.maxQty) MAX_QTY = p.maxQty;
+        ONLINE_PAY = !!p.onlinePayment;
+        applyPayMode();
         renderCart();
       }
     }).catch(function(){ /* keep the fallback if the server can't be reached */ });
@@ -566,7 +575,13 @@
     });
   }
 
-  /* ---------- submit: payment gateway not yet connected, the order is captured and sent to our queue ---------- */
+  // Sends the customer to iKhokha's payment page for an order that was saved but not paid yet.
+  function retryPayment(orderNumber, token){
+    return fetch("/api/payments/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order: orderNumber, token: token }) })
+      .then(function(r){ return r.json().then(function(d){ if (!r.ok || !d.payUrl) throw new Error(d.error || "We couldn't open the payment page. Please try again."); location.href = d.payUrl; }); });
+  }
+
+  /* ---------- submit: the order is saved, then (when online payment is on) the customer pays on iKhokha ---------- */
   orderForm.addEventListener("submit", function(e){
     e.preventDefault();
     if (!cart.length && !imageOk){
@@ -578,7 +593,7 @@
       return;
     }
     submitBtn.disabled = true;
-    var originalLabel = submitBtn.textContent;
+    var leaving = false;
     submitBtn.textContent = "Preparing your print files…";
 
     // The print still on screen is part of the order: add it first.
@@ -586,10 +601,26 @@
       if (!ok) return null;
       submitBtn.textContent = "Sending your order…";
       return sendOrder(cart).then(function(order){
+        cart.forEach(function(it){ it.files.forEach(function(f){ URL.revokeObjectURL(f.url); }); });
+        if (order.payUrl){   // straight on to card payment
+          leaving = true;
+          submitBtn.textContent = "Taking you to secure payment…";
+          location.href = order.payUrl;
+          return;
+        }
         // The print files live with the order in the admin; the customer just gets a confirmation.
         var panels = cart.reduce(function(n, it){ return n + it.panels * it.qty; }, 0);
         orderSummaryEl.textContent = plural(cart.length, "print") + ", " + plural(panels, "panel") + ", " + rands(currentQuote(cart).totalCents) + ".";
-        cart.forEach(function(it){ it.files.forEach(function(f){ URL.revokeObjectURL(f.url); }); });
+        var retry = document.getElementById("pay-retry");
+        retry.hidden = !order.payError;
+        document.getElementById("success-pay-note").hidden = !!order.payError;
+        if (order.payError){
+          document.getElementById("pay-retry-msg").textContent = order.payError;
+          document.getElementById("pay-retry-btn").onclick = function(){
+            var b = this; b.disabled = true;
+            retryPayment(order.orderNumber, order.payToken).catch(function(err){ b.disabled = false; vantaDialog({ title: "Payment page didn't open", message: err.message }); });
+          };
+        }
         orderRefEl.textContent = "Order reference: " + order.orderNumber;
         orderForm.hidden = true;
         orderSuccess.classList.add("show");
@@ -601,8 +632,9 @@
       if (err && err.pricesChanged) loadPricing();
       vantaDialog({ title:"Order not sent", message: err && err.message ? err.message : "We couldn't save your order. Please try again." });
     }).then(function(){
+      if (leaving) return;   // keep the button busy while the payment page loads
       submitBtn.disabled = false;
-      submitBtn.textContent = originalLabel;
+      applyPayMode();
     });
   });
 

@@ -72,6 +72,17 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id);
 
+-- Every iKhokha payment link created (several per order if the customer retries). order_id NULL = admin test payment.
+CREATE TABLE IF NOT EXISTS order_paylinks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER REFERENCES orders(id),
+  paylink_id TEXT NOT NULL UNIQUE,
+  external_id TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_paylinks_order ON order_paylinks(order_id);
+
 CREATE TABLE IF NOT EXISTS order_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER NOT NULL REFERENCES orders(id),
@@ -163,7 +174,7 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) seedSetting.run(k, v);
 db.exec("DELETE FROM settings WHERE key IN ('price_single_cents', 'price_duo_cents', 'price_quad_cents')");
 
 // Volume discount applied to each order, frozen when it was placed (product_cents stays the pre-discount panel subtotal).
-for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"], ["promo_name", "TEXT"], ["promo_saving_cents", "INTEGER NOT NULL DEFAULT 0"]]) {
+for (const [col, def] of [["discount_pct", "REAL NOT NULL DEFAULT 0"], ["discount_cents", "INTEGER NOT NULL DEFAULT 0"], ["promo_name", "TEXT"], ["promo_saving_cents", "INTEGER NOT NULL DEFAULT 0"], ["pay_token", "TEXT"]]) {
   if (!db.prepare("PRAGMA table_info(orders)").all().some((c) => c.name === col)) db.exec("ALTER TABLE orders ADD COLUMN " + col + " " + def);
 }
 

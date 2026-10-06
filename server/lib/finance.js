@@ -245,7 +245,12 @@ const TEXT_SETTINGS = { business_name: 80, business_legal_name: 120, business_ad
 
 function settingsView() {
   const s = getSettings();
-  const out = { deductStockOn: s.deduct_stock_on };
+  // iKhokha: the App ID is shown, the secret never leaves the server (only whether it is set).
+  const out = {
+    deductStockOn: s.deduct_stock_on,
+    ikhokhaAppId: s.ikhokha_app_id || "", ikhokhaSecretSet: !!s.ikhokha_app_secret,
+    ikhokhaFromEnv: !!(process.env.IKHOKHA_APP_ID && process.env.IKHOKHA_APP_SECRET)
+  };
   for (const k of Object.keys(TEXT_SETTINGS)) out[k] = s[k] || "";
   return out;
 }
@@ -253,6 +258,11 @@ function saveSettings(f) {
   return tx(() => {
     if (!["in_production", "completed", "off"].includes(f.deductStockOn)) throw new HttpError(400, "Invalid stock deduction setting.");
     setSetting("deduct_stock_on", f.deductStockOn);
+    if (f.ikhokhaClear) { setSetting("ikhokha_app_id", ""); setSetting("ikhokha_app_secret", ""); }
+    else {
+      if ("ikhokhaAppId" in f) setSetting("ikhokha_app_id", clampStr(f.ikhokhaAppId, 100));
+      if (f.ikhokhaSecret) setSetting("ikhokha_app_secret", clampStr(f.ikhokhaSecret, 200)); // blank = keep the saved secret
+    }
     for (const [k, max] of Object.entries(TEXT_SETTINGS)) if (k in f) setSetting(k, clampStr(f[k], max));
     return settingsView();
   });

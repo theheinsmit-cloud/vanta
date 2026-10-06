@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment — VANTA</title>
+<meta name="description" content="Your VANTA payment.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b0a08">
+<link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400..900;1,400..900&family=Jost:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<nav class="site-nav" aria-label="Primary">
+  <a class="nav-brand" href="index.html">
+    <img src="assets/logo.png" alt="" width="34" height="34">
+    <span>VANTA</span>
+  </a>
+  <button class="nav-toggle" aria-expanded="false" aria-label="Open menu">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <ul class="nav-links">
+    <li><a href="index.html">Home</a></li>
+    <li><a href="showcase.html">Showcase</a></li>
+    <li><a href="how-it-works.html">How it works</a></li>
+    <li><a href="faq.html">FAQ</a></li>
+    <li><a href="contact.html">Contact</a></li>
+    <li><a class="nav-cta" href="create.html">Create your VANTA</a></li>
+  </ul>
+</nav>
+
+<main id="main" tabindex="-1">
+
+<div class="page-hero" style="padding-bottom:2rem">
+  <p class="eyebrow" id="pay-eyebrow">Payment</p>
+  <h1 id="pay-title">Checking your payment…</h1>
+  <p id="pay-text">One moment while we confirm your payment with iKhokha.</p>
+</div>
+
+<section class="band-y" style="padding-top:0">
+  <div class="wrap" style="max-width:720px">
+    <div class="pay-card" id="pay-card" aria-live="polite">
+      <p class="eyebrow" id="pay-ref"></p>
+      <p id="pay-detail"></p>
+      <div class="pay-actions">
+        <button class="btn btn-primary" type="button" id="pay-again" hidden>Try payment again</button>
+        <a class="btn btn-ghost" href="index.html" id="pay-home">Back to home</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="footer-grid">
+    <div>
+      <div class="footer-brand">
+        <img src="assets/logo.png" alt="" width="30" height="30">
+        <span>VANTA</span>
+      </div>
+      <p style="max-width:32ch">Premium custom metal prints. Your image, made permanent. South Africa.</p>
+    </div>
+    <div class="footer-col">
+      <h4>Explore</h4>
+      <a href="showcase.html">Showcase</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="faq.html">FAQ</a>
+      <a href="create.html">Create your VANTA</a>
+    </div>
+    <div class="footer-col">
+      <h4>Contact</h4>
+      <a href="contact.html">Get in touch</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <span>© 2026 VANTA. All rights reserved.</span>
+    <span>Made in South Africa.</span>
+  </div>
+</footer>
+
+<script src="assets/js/pricing.js"></script>
+<script src="assets/js/site.js"></script>
+<script src="assets/js/payment.js"></script>
+</body>
+</html>
